@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "spatialvlm"
+version = "0.1.0"
+description = "Recovering Destroyed Spatial Intelligence in Foundation Models for Indoor Navigation"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+
+dependencies = [
+    "torch>=2.2",
+    "transformers>=4.46",
+    "peft>=0.13",
+    "trl>=0.12",
+    "accelerate>=1.0",
+    "habitat-sim>=0.3",
+    "habitat-lab>=0.3",
+    "einops>=0.8",
+    "xformers>=0.0.28",
+    "omegaconf>=2.3",
+    "wandb>=0.18",
+    "pytest>=8.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-cov", "ruff", "mypy"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"

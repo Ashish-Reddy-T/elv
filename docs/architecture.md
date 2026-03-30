@@ -269,7 +269,7 @@ GATr MLP projector                  ~17M      Trainable
 SVA queries [576×4096]               2.4M     Trainable
 SVA cross-attn (2 layers, KV=3314)  ~84M      Trainable
 Gated cross-attn (9 layers)        ~378M      Trainable
-Qwen3-VL-7B backbone              7,600M      Frozen
+Qwen3-VL-8B backbone              8,000M      Frozen
 Qwen3 LoRA rank-32                  ~31M      Trainable
 ──────────────────────────────────────────────────────
 Total                             ~8,891M

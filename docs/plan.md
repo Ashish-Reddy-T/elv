@@ -303,7 +303,7 @@ Vision tokens are 10–100× larger than text tokens in raw magnitude. Without t
 
 **Step 3 — Gated Cross-Attention**
 
-Inserted at every 4th block of Qwen3-VL-7B's 36 transformer layers: {4, 8, 12, 16, 20, 24, 28, 32, 36} = 9 injection points. At each injection layer, the LLM's current hidden states query the 576 fused spatial tokens:
+Inserted at every 4th block of Qwen3-VL-8B's 36 transformer layers: {4, 8, 12, 16, 20, 24, 28, 32, 36} = 9 injection points. At each injection layer, the LLM's current hidden states query the 576 fused spatial tokens:
 
 ```
 h_new = h_old + tanh(α) × CrossAttn(Q=h_old, K=spatial_576, V=spatial_576)
@@ -330,7 +330,7 @@ The spatial tokens [B, 576, 4096] are **static** across all 9 injection layers �
 
 ## 4. Stage 4 — LLM Backbone with GridCellRoPE3D + Action Decoding
 
-### 4.1 Backbone: Qwen3-VL-7B
+### 4.1 Backbone: Qwen3-VL-8B
 
 ```
 hidden_size:            4096   ← D_proj = 4096 matches exactly ✓
@@ -414,7 +414,7 @@ SVA learnable queries [576×4096]     2.4M       Trainable Stage 3+
 SVA cross-attn (2 layers, KV=3314)  ~84M        Trainable Stage 3+
 SVA typed attention bias (3×3)       0.000M     Trainable Stage 3+
 Gated cross-attn (9 layers)         ~377M       Trainable Stage 3+
-Qwen3-VL-7B backbone              7,600M        Frozen
+Qwen3-VL-8B backbone              8,000M        Frozen
 Qwen3 LoRA rank-32                   ~31M       Trainable Stage 2+
 ─────────────────────────────────────────────────────────
 Total:                            ~8,890M
@@ -599,7 +599,7 @@ We lose on: pure visual navigation without language (PointNav — V-JEPA doesn't
 - *Injection frequency*: Every 4th block (9 points) vs. every 6th (6 points) for gated cross-attention. Compute vs. performance tradeoff.
 
 **Baseline comparisons**:
-- Vanilla Qwen3-VL-7B + Habitat wrapper (no spatial modules).
+- Vanilla Qwen3-VL-8B + Habitat wrapper (no spatial modules).
 - NaVid (video-based VLM navigation).
 - Efficient-VLN (VLN-CE R2R SOTA, 64.2% SR).
 - NavFoM (cross-embodiment navigation foundation model, 64.9% SR).
@@ -739,7 +739,7 @@ SVA attention savings:      O(576×3314) vs O(3314²)  →  5.7× cheaper
 
 STAGE 4 — LLM BACKBONE
 ───────────────────────────────────────────────────────────────
-Backbone:                   Qwen3-VL-7B
+Backbone:                   Qwen3-VL-8B
   hidden_size:              4096  ← D_proj = 4096 exact match ✓
   num_hidden_layers:        36
   num_attention_heads:      32
