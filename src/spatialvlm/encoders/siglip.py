@@ -1,0 +1,216 @@
+"""SigLIP2-SO400M/16-NaFlex encoder with multi-layer feature extraction.
+
+Architecture notes:
+  - Model: google/siglip2-so400m-patch16-naflex  (⚠ VERIFY model ID at runtime)
+  - Input resolution: 384×384 → patch_size=16 → 24×24 = 576 patches (exact, no edge artefacts)
+  - SigLIP does NOT have a CLS token — encoder outputs are pure patch tokens
+  - Extract intermediate features at layers {9, 18, 27} (evenly-spaced thirds)
+  - Channel-concatenate 3 × hidden_size → [B, 576, 3456]
+  - All encoder parameters are frozen
+
+Multi-layer extraction rationale (hypothesis H1c):
+  Lower layers capture low-level structure (edges, textures);
+  middle layers capture mid-level features (surfaces, objects);
+  final layer captures semantic context. Concatenating all three
+  gives richer spatial features than final-layer-only extraction.
+
+Implementation note on hooks:
+  We use register_forward_hook on each transformer encoder block.
+  The hook captures the block's output hidden states, which are the
+  residual stream activations AFTER the block's attention + MLP.
+  These are the semantically richest per-patch representations at each depth.
+"""
+
+from __future__ import annotations
+
+from typing import Dict, List, Optional
+
+import torch
+import torch.nn as nn
+from transformers import AutoModel, AutoConfig
+
+
+def _find_encoder_layers(model: nn.Module) -> nn.ModuleList:
+    """Locate the transformer encoder layer list in a SigLIP vision model.
+
+    Tries common HuggingFace structural patterns for SigLIP variants.
+
+    Returns
+    -------
+    layers : nn.ModuleList
+        The list of transformer encoder blocks.
+
+    Raises
+    ------
+    RuntimeError
+        If no encoder layer list is found.
+    """
+    # Pattern 1: model.vision_model.encoder.layers  (SigLIP, SigLIP2)
+    # Pattern 2: model.encoder.layers               (some variants)
+    candidate_paths = [
+        ["vision_model", "encoder", "layers"],
+        ["vision_model", "encoder", "layer"],
+        ["encoder", "layers"],
+        ["encoder", "layer"],
+    ]
+    for path in candidate_paths:
+        obj = model
+        try:
+            for attr in path:
+                obj = getattr(obj, attr)
+            if isinstance(obj, nn.ModuleList):
+                return obj
+        except AttributeError:
+            continue
+
+    raise RuntimeError(
+        f"Cannot find encoder layers in {type(model).__name__}. "
+        "Expected attribute path like vision_model.encoder.layers. "
+        "Check the model architecture with: print(model)"
+    )
+
+
+class SigLIP2Encoder(nn.Module):
+    """SigLIP2-SO400M encoder with multi-layer feature extraction.
+
+    Extracts features from intermediate transformer layers and concatenates
+    them along the channel dimension.
+
+    Parameters
+    ----------
+    model_id : str
+        HuggingFace model ID. ⚠ VERIFY before use.
+    extract_layers : list of int
+        1-indexed layer numbers to extract from (e.g. [9, 18, 27]).
+        Must be within [1, num_hidden_layers].
+    device : torch.device
+    """
+
+    def __init__(
+        self,
+        model_id: str = "google/siglip2-so400m-patch16-naflex",
+        extract_layers: Optional[List[int]] = None,
+        device: Optional[torch.device] = None,
+    ) -> None:
+        super().__init__()
+
+        if extract_layers is None:
+            extract_layers = [9, 18, 27]
+
+        if device is None:
+            device = torch.device("cpu")
+
+        # Load model and config — ⚠ dimensions must come from config, not hardcoded values
+        cfg = AutoConfig.from_pretrained(model_id)
+        model = AutoModel.from_pretrained(model_id)
+        model = model.to(device)
+
+        # Freeze all encoder parameters
+        for param in model.parameters():
+            param.requires_grad_(False)
+        model.eval()
+
+        # Introspect architecture from config
+        # SigLIP2 wraps SigLIP vision config; try common attribute paths
+        vision_cfg = getattr(cfg, "vision_config", cfg)
+        self._hidden_size: int = int(vision_cfg.hidden_size)  # ⚠ verified from config
+        self._num_layers: int = int(vision_cfg.num_hidden_layers)  # ⚠ verified from config
+        self._patch_size: int = int(vision_cfg.patch_size)         # ⚠ verified from config
+        self._image_size: int = int(getattr(vision_cfg, "image_size", 384))  # ⚠ verified
+
+        # Validate extract_layers against actual model depth
+        for layer_idx in extract_layers:
+            if not (1 <= layer_idx <= self._num_layers):
+                raise ValueError(
+                    f"extract_layer {layer_idx} is out of range "
+                    f"[1, {self._num_layers}] for {model_id}"
+                )
+
+        self._extract_layers = sorted(extract_layers)
+        self._model = model
+        self._device = device
+
+        # Expected patch count (derived from verified config values)
+        patches_per_side = self._image_size // self._patch_size
+        self._n_patches: int = patches_per_side * patches_per_side
+
+        # Register hooks to capture intermediate features
+        # Keys: 0-indexed layer number
+        self._hook_outputs: Dict[int, torch.Tensor] = {}
+        self._hooks: List[torch.utils.hooks.RemovableHook] = []
+
+        encoder_layers = _find_encoder_layers(self._model)
+
+        for layer_1idx in self._extract_layers:
+            layer_0idx = layer_1idx - 1  # convert to 0-indexed
+            hook = encoder_layers[layer_0idx].register_forward_hook(
+                self._make_hook(layer_0idx)
+            )
+            self._hooks.append(hook)
+
+    def _make_hook(self, layer_0idx: int):
+        """Create a forward hook that stores hidden states for the given layer."""
+        def hook(module: nn.Module, input: tuple, output) -> None:  # noqa: ARG001
+            # Transformer blocks typically return (hidden_states,) or just hidden_states
+            if isinstance(output, tuple):
+                hidden = output[0]
+            else:
+                hidden = output
+            self._hook_outputs[layer_0idx] = hidden
+        return hook
+
+    def forward(self, pixel_values: torch.Tensor) -> torch.Tensor:
+        """Extract multi-layer features from SigLIP2.
+
+        Parameters
+        ----------
+        pixel_values : Tensor[B, 3, H, W]
+            Preprocessed images. H=W=384 for standard SigLIP2-SO400M.
+
+        Returns
+        -------
+        features : Tensor[B, n_patches, n_layers × hidden_size]
+            Channel-concatenated features from all extraction layers.
+            For default config: [B, 576, 3456]  (576 = 24², 3456 = 3 × 1152)
+        """
+        self._hook_outputs.clear()
+
+        with torch.no_grad():
+            _ = self._model(pixel_values=pixel_values)
+
+        # Collect features in layer order and strip CLS token if present
+        features = []
+        for layer_1idx in self._extract_layers:
+            layer_0idx = layer_1idx - 1
+            h = self._hook_outputs[layer_0idx]  # [B, T, hidden_size]
+
+            # Strip CLS token if the sequence length is n_patches + 1
+            # SigLIP typically has no CLS, but handle it defensively
+            if h.shape[1] == self._n_patches + 1:
+                h = h[:, 1:, :]   # [B, n_patches, hidden_size]
+            elif h.shape[1] != self._n_patches:
+                raise RuntimeError(
+                    f"Unexpected token count {h.shape[1]} at layer {layer_1idx}. "
+                    f"Expected {self._n_patches} or {self._n_patches + 1}. "
+                    "Check model architecture and image_size/patch_size config."
+                )
+
+            features.append(h)  # [B, n_patches, hidden_size]
+
+        # Concatenate along channel dimension
+        return torch.cat(features, dim=-1)  # [B, n_patches, n_layers × hidden_size]
+
+    def __del__(self) -> None:
+        # Clean up hooks when the encoder is garbage collected
+        for hook in self._hooks:
+            hook.remove()
+
+    @property
+    def out_dim(self) -> int:
+        """Output channel dimension = n_extract_layers × hidden_size."""
+        return len(self._extract_layers) * self._hidden_size
+
+    @property
+    def n_patches(self) -> int:
+        """Number of spatial patch tokens."""
+        return self._n_patches

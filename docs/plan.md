@@ -173,8 +173,26 @@ Standard RoPE: token at sequence position m gets rotation R(m). Two tokens at po
 
 **Dimensional trace**:
 
+GridCellRoPE3D is computed on 576 positions (the SVA query grid), NOT the 1369 DINOv2 positions.
+
+**Critical invariant: content-position consistency.** Each SVA query is associated with a
+specific spatial sub-region of the feature maps. The 3D position assigned to SVA query (i,j)
+MUST be derived using the same spatial grouping that defines what content that query fuses.
+If SVA query (i,j) attends primarily to DINOv2/GATr patches in region R, then its 3D position
+must be the representative position of region R. Otherwise the fused token's semantic content
+came from one area of the scene but its positional encoding says it's somewhere else —
+destroying exactly the spatial coherence this paper exists to recover.
+
+**Implementation**: The SVA organizes 576 queries on a 24×24 grid, where each query covers a
+spatial sub-region of the 37×37 source grid (37/24 ≈ 1.54 patches/side). For each query cell,
+the 3D position is computed by aggregating backprojected positions from the DINOv2 patches
+that fall within that cell's spatial region — using the same region assignment that the SVA
+uses for its spatial attention bias. This ensures geometric fidelity between what a token
+"knows" (from SVA cross-attention) and where it "is" (from GridCellRoPE3D).
+
 ```
-Input:                    [B, 1369, 3]
+Input:                    [B, 1369, 3]  (from backprojection, 37×37 grid)
+SVA-aligned position pool: [B, 576, 3] (24×24 grid, same spatial regions as SVA queries)
 
 4 tetrahedral directions (regular tetrahedron vertices on unit sphere):
   d₁ = [+1,+1,+1]/√3
@@ -182,7 +200,7 @@ Input:                    [B, 1369, 3]
   d₃ = [−1,+1,−1]/√3
   d₄ = [−1,−1,+1]/√3
 
-Per position p, scalar projection:  sᵢ = dᵢ · p  →  [B, 1369, 4]
+Per position p, scalar projection:  sᵢ = dᵢ · p  →  [B, 576, 4]
 
 8 frequency modules, golden ratio spacing (φ=1.618):
   fₖ = 10 × φᵏ  for k=0..7
@@ -201,7 +219,7 @@ Routing:
   Spatial tokens: all 64 rotary pairs replaced with GridCellRoPE3D
   Mapping:        4×8×2 = 64 = Qwen3's 64 rotary pairs ✓  no projection needed
 
-Stored output:    [B, 1369, 64]  applied as Q,K rotations in Stage 4
+Stored output:    [B, 576, 64]  applied as Q,K rotations in Stage 4
 Parameters:       0  (pure computation on GT positions)
 ```
 
@@ -210,8 +228,8 @@ Parameters:       0  (pure computation on GT positions)
 ### 2.7 Stage 2 output
 
 ```
-GATr invariant features:     [B, 1369, 4096]
-GridCellRoPE3D rotations:    [B, 1369, 64]   (stored, applied in Stage 4)
+GATr invariant features:     [B, 1369, 4096]  (37×37 grid, enters SVA as KV)
+GridCellRoPE3D rotations:    [B, 576, 64]     (24×24 grid, applied in Stage 4 to post-SVA tokens)
 ```
 
 ### 2.8 Key hypotheses to test
@@ -724,7 +742,7 @@ GridCellRoPE3D:
   Frequencies:              8 golden-ratio spaced  [0.10m → 2.91m]
   Encoding:                 4 × 8 × 2 = 64 rotary dims
   Qwen3 rotary pairs:       64  →  exact match, no projection needed ✓
-  Stored output:            [B, 1369, 64]
+  Stored output:            [B, 576, 64]   (SVA-aligned positions, not raw 1369)
   Parameters:               0
 
 STAGE 3 — FUSION

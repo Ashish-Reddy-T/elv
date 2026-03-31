@@ -76,7 +76,7 @@ Total trainable:                        ~584M   (6.6%)
 
 ```
 ablations/
-├── CLAUDE.md              # this file
+├── AGENTS.md              # this file
 ├── TODO.md                # implementation progress tracker
 ├── pyproject.toml         # package config
 ├── Makefile               # test/lint/format shortcuts
@@ -147,7 +147,7 @@ ablations/
 
 **WARNING: Architecture constants for pre-trained models (Qwen3-VL, SigLIP2, DINOv2) MUST be
 introspected from the loaded model at runtime, not hardcoded from documentation or memory.**
-Documentation can be wrong, model versions can differ, and LLMs (including Claude) hallucinate
+Documentation can be wrong, model versions can differ, and LLMs (including Codex) hallucinate
 numerical details. The values below are our _best current understanding_ but every one marked
 with `# ⚠ VERIFY` must be confirmed by loading the model and reading its config.
 

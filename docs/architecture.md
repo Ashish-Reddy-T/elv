@@ -117,7 +117,14 @@ Output:                   [B, 1369, 4096]
 **2C: GridCellRoPE3D** (Refer `REPOS/gridpe-2d` for 2D implementation inspiration)
 
 ```
-Input:                    [B, 1369, 3]  (same positions from 2A)
+Input:                    [B, 1369, 3]  (from backprojection, 37×37 DINOv2 grid)
+
+SVA-aligned position pool: [B, 576, 3]  (24×24 grid)
+  Each SVA query (i,j) owns a spatial sub-region of the 37×37 grid.
+  The 3D position for query (i,j) is aggregated from the backprojected
+  positions of DINOv2 patches within that same sub-region.
+  CRITICAL: must use the same spatial grouping as SVA's query-region
+  assignment — content and position must be geometrically consistent.
 
 4 tetrahedral directions:
   d₁ = [+1,+1,+1]/√3
@@ -125,19 +132,19 @@ Input:                    [B, 1369, 3]  (same positions from 2A)
   d₃ = [−1,+1,−1]/√3
   d₄ = [−1,−1,+1]/√3
 
-For each position p:   sᵢ = dᵢ · p  →  [B, 1369, 4]
+For each position p:   sᵢ = dᵢ · p  →  [B, 576, 4]
 
 8 frequencies (φ=1.618):   fₖ = 10 × φᵏ
   Periods (m): [0.10, 0.16, 0.26, 0.42, 0.69, 1.11, 1.80, 2.91]
 
-Encoding:  4 × 8 × 2 = 64 rotary dims  →  [B, 1369, 64]
+Encoding:  4 × 8 × 2 = 64 rotary dims  →  [B, 576, 64]
 
 Qwen3 M-RoPE has 64 rotary pairs per head (head_dim=128).
 Spatial tokens: replace all 64 pairs with GridCellRoPE3D
 Text tokens:    keep standard M-RoPE [24t, 20h, 20w]
 Mapping:        64 = 64  ✓  no projection needed
 
-Stored:                   [B, 1369, 64]  applied at attention in Stage 4
+Stored:                   [B, 576, 64]  applied at attention in Stage 4
 Parameters:               0
 ```
 
