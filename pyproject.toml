@@ -38,4 +38,4 @@ select = ["E", "F", "W", "I", "N", "UP"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-v --tb=short -p no:deepeval"
+addopts = "-v --tb=short -p no:deepeval -m 'not slow'"

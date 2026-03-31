@@ -2,8 +2,13 @@
 
 import math
 
+import importlib.util
+
 import pytest
 import torch
+
+if importlib.util.find_spec("gatr") is None:  # pragma: no cover - dependency guard
+    pytest.skip("GATr dependency missing; skip wrapper tests", allow_module_level=True)
 
 from spatialvlm.geometry.gatr_wrapper import GATrWrapper
 
