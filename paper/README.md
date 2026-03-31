@@ -20,3 +20,11 @@ This updates:
 - `paper/tables/main_results.tex`
 - `paper/tables/ablation_results.tex`
 - `paper/figures/permutation_curve.csv`
+
+## Useful validation commands
+
+```bash
+make lint
+make test-unit
+pytest tests/test_rewards.py tests/test_phase9.py tests/test_paper_assets.py -v --tb=short
+```
