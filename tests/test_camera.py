@@ -1,7 +1,6 @@
 """Unit tests for camera intrinsics and backprojection utilities."""
 
 import torch
-import pytest
 
 from spatialvlm.utils.camera import CameraIntrinsics, backproject_pixel, make_pixel_grid
 
@@ -70,14 +69,14 @@ class TestBackprojectPixel:
     def test_batch_shape(self):
         """Backprojection should broadcast over arbitrary batch dims."""
         intrinsics = CameraIntrinsics(fx=320.0, fy=320.0, cx=259.0, cy=259.0, width=518, height=518)
-        B, H, W = 2, 518, 518
-        grid = make_pixel_grid(W, H)
-        u = grid[..., 0].unsqueeze(0).expand(B, -1, -1)  # [B, H, W]
-        v = grid[..., 1].unsqueeze(0).expand(B, -1, -1)  # [B, H, W]
-        depth = torch.ones(B, H, W) * 2.0
+        batch_size, height, width = 2, 518, 518
+        grid = make_pixel_grid(width, height)
+        u = grid[..., 0].unsqueeze(0).expand(batch_size, -1, -1)  # [B, H, W]
+        v = grid[..., 1].unsqueeze(0).expand(batch_size, -1, -1)  # [B, H, W]
+        depth = torch.ones(batch_size, height, width) * 2.0
 
         pts = backproject_pixel(u, v, depth, intrinsics)
-        assert pts.shape == (B, H, W, 3)
+        assert pts.shape == (batch_size, height, width, 3)
 
     def test_zero_depth_gives_zero_xyz(self):
         """Zero depth → all-zero 3D point (not visible)."""

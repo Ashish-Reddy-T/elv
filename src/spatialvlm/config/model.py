@@ -13,7 +13,6 @@ Never copy constants from documentation into production code.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List
 
 
 @dataclass
@@ -36,8 +35,8 @@ class EncoderConfig:
 
     # Multi-layer extraction — evenly-spaced thirds of total depth
     # ⚠ VERIFY indices match actual model depth (SigLIP2: 27 layers, DINOv2: 24 layers)
-    siglip_extract_layers: List[int] = field(default_factory=lambda: [9, 18, 27])
-    dinov2_extract_layers: List[int] = field(default_factory=lambda: [8, 16, 24])
+    siglip_extract_layers: list[int] = field(default_factory=lambda: [9, 18, 27])
+    dinov2_extract_layers: list[int] = field(default_factory=lambda: [8, 16, 24])
 
     # Projector output dim — must equal LLM hidden size
     # ⚠ VERIFY from Qwen3-VL cfg.hidden_size
@@ -92,7 +91,7 @@ class FusionConfig:
 
     # Gated cross-attention injection — every 4th of 36 Qwen3 layers
     # ⚠ VERIFY: must match actual Qwen3 num_hidden_layers
-    cross_attn_layers: List[int] = field(
+    cross_attn_layers: list[int] = field(
         default_factory=lambda: [4, 8, 12, 16, 20, 24, 28, 32, 36]
     )
 
@@ -119,7 +118,7 @@ class BackboneConfig:
 
     # M-RoPE section: [time, height, width] → 64 rotary pairs total
     # ⚠ VERIFY from cfg.rope_scaling.mrope_section
-    mrope_section: List[int] = field(default_factory=lambda: [24, 20, 20])
+    mrope_section: list[int] = field(default_factory=lambda: [24, 20, 20])
 
     # LoRA
     lora_rank: int = 32

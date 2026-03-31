@@ -10,8 +10,6 @@ Instantiated three times with different input dimensions:
 
 from __future__ import annotations
 
-from typing import Optional
-
 import torch
 import torch.nn as nn
 
@@ -33,7 +31,7 @@ class MLPProjector(nn.Module):
         self,
         in_dim: int,
         out_dim: int,
-        hidden_dim: Optional[int] = None,
+        hidden_dim: int | None = None,
     ) -> None:
         super().__init__()
         if hidden_dim is None:

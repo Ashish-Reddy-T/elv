@@ -1,7 +1,7 @@
 """Unit tests for RMS norm matching module."""
 
-import torch
 import pytest
+import torch
 
 from spatialvlm.fusion.norm_matching import RMSNormMatching
 
@@ -73,7 +73,6 @@ class TestNormScaling:
         module.train()
 
         vis = torch.randn(2, 576, 64)
-        txt = vis[:, :64, :].clone()  # same statistics
 
         # Force EMA to match vision RMS
         vis_rms = float(rms_norm(vis))

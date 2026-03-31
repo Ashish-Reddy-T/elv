@@ -11,7 +11,6 @@ where (u, v) are pixel coordinates (col, row) and (cx, cy) is the principal poin
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 import torch
 
@@ -43,7 +42,7 @@ class CameraIntrinsics:
 def make_pixel_grid(
     width: int,
     height: int,
-    device: Optional[torch.device] = None,
+    device: torch.device | None = None,
     dtype: torch.dtype = torch.float32,
 ) -> torch.Tensor:
     """Create a dense grid of pixel (u, v) coordinates.

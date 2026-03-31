@@ -23,11 +23,9 @@ Implementation note on hooks:
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
-
 import torch
 import torch.nn as nn
-from transformers import AutoModel, AutoConfig
+from transformers import AutoConfig, AutoModel
 
 
 def _find_encoder_layers(model: nn.Module) -> nn.ModuleList:
@@ -89,8 +87,8 @@ class SigLIP2Encoder(nn.Module):
     def __init__(
         self,
         model_id: str = "google/siglip2-so400m-patch16-naflex",
-        extract_layers: Optional[List[int]] = None,
-        device: Optional[torch.device] = None,
+        extract_layers: list[int] | None = None,
+        device: torch.device | None = None,
     ) -> None:
         super().__init__()
 
@@ -136,8 +134,8 @@ class SigLIP2Encoder(nn.Module):
 
         # Register hooks to capture intermediate features
         # Keys: 0-indexed layer number
-        self._hook_outputs: Dict[int, torch.Tensor] = {}
-        self._hooks: List[torch.utils.hooks.RemovableHook] = []
+        self._hook_outputs: dict[int, torch.Tensor] = {}
+        self._hooks: list[torch.utils.hooks.RemovableHook] = []
 
         encoder_layers = _find_encoder_layers(self._model)
 

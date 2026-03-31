@@ -8,11 +8,10 @@ Slow tests (marked @pytest.mark.slow, require HuggingFace downloads):
   - DINOv2Encoder: output shape, frozen params, CLS stripping
 """
 
-import torch
 import pytest
+import torch
 
 from spatialvlm.encoders.projector import MLPProjector
-
 
 # ──────────────────────────────────────────────────────────────────────────────
 # MLPProjector — fast tests, no model deps

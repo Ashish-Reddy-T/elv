@@ -6,7 +6,6 @@ Registers custom markers:
     Skip with: pytest tests/ -m "not slow"   (used by `make test-unit`)
 """
 
-import pytest
 
 
 def pytest_configure(config):

@@ -16,8 +16,6 @@ Hypothesis H3b: this module adds measurable spatial task performance beyond gate
 
 from __future__ import annotations
 
-from typing import Optional
-
 import torch
 import torch.nn as nn
 
@@ -48,7 +46,7 @@ class RMSNormMatching(nn.Module):
     def forward(
         self,
         vision_tokens: torch.Tensor,
-        text_tokens: Optional[torch.Tensor] = None,
+        text_tokens: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Scale vision tokens to text-token magnitude.
 

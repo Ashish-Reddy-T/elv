@@ -14,8 +14,8 @@ Critical properties verified:
 
 import math
 
-import torch
 import pytest
+import torch
 
 from spatialvlm.geometry.gridcell_rope3d import GridCellRoPE3D
 

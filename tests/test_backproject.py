@@ -1,13 +1,12 @@
 """Unit tests for depth backprojection and patch-level aggregation."""
 
 import torch
-import pytest
 
-from spatialvlm.utils.camera import CameraIntrinsics
 from spatialvlm.geometry.backproject import (
     aggregate_patches_percentile,
     backproject_depth_map,
 )
+from spatialvlm.utils.camera import CameraIntrinsics
 
 # Default Habitat-like intrinsics for testing
 INTRINSICS = CameraIntrinsics(fx=320.0, fy=320.0, cx=259.0, cy=259.0, width=518, height=518)
