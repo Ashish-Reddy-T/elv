@@ -5,6 +5,7 @@ import torch
 from spatialvlm.geometry.backproject import (
     aggregate_patches_percentile,
     backproject_depth_map,
+    pool_positions_to_sva_grid,
 )
 from spatialvlm.utils.camera import CameraIntrinsics
 
@@ -136,3 +137,69 @@ class TestAggregatePatchesPercentile:
         assert torch.allclose(patches[0, 0, 2], torch.tensor(expected_z), atol=1e-4), (
             f"Expected Z={expected_z} at rank {k}, got {patches[0, 0, 2]:.4f}"
         )
+
+
+class TestPoolPositionsToSVAGrid:
+    """Tests for SVA-aligned position pooling (37×37 → 24×24)."""
+
+    def test_output_shape_default(self):
+        """Standard case: 1369 DINOv2 positions → 576 SVA positions."""
+        positions = torch.randn(2, 1369, 3)
+        pooled = pool_positions_to_sva_grid(positions)
+        assert pooled.shape == (2, 576, 3), f"Expected [2,576,3], got {pooled.shape}"
+
+    def test_output_shape_custom(self):
+        """Custom grid sizes."""
+        positions = torch.randn(1, 100, 3)
+        pooled = pool_positions_to_sva_grid(positions, source_h=10, source_w=10, target_h=5, target_w=5)
+        assert pooled.shape == (1, 25, 3)
+
+    def test_constant_positions_preserved(self):
+        """If all positions are the same point, pooled positions equal that point."""
+        point = torch.tensor([1.5, -2.0, 3.0])
+        positions = point.unsqueeze(0).unsqueeze(0).expand(1, 1369, 3).contiguous()
+        pooled = pool_positions_to_sva_grid(positions)
+        assert torch.allclose(pooled, point.unsqueeze(0).unsqueeze(0).expand(1, 576, 3), atol=1e-5)
+
+    def test_spatial_locality(self):
+        """Positions in the top-left of the 37×37 grid should map to the top-left of 24×24."""
+        positions = torch.zeros(1, 1369, 3)
+        # Set top-left patch (index 0 in row-major) to a known value
+        positions[0, 0, :] = torch.tensor([10.0, 20.0, 30.0])
+        pooled = pool_positions_to_sva_grid(positions)
+        # Top-left SVA query (index 0) should reflect this
+        assert pooled[0, 0, 0].abs() > 0, "Top-left SVA position should be nonzero"
+        # Bottom-right SVA query (index 575) should be zero
+        assert torch.allclose(pooled[0, -1], torch.zeros(3), atol=1e-6)
+
+    def test_rejects_wrong_token_count(self):
+        """Should raise if token count doesn't match source_h * source_w."""
+        positions = torch.randn(1, 500, 3)
+        try:
+            pool_positions_to_sva_grid(positions)
+            assert False, "Should have raised ValueError"
+        except ValueError:
+            pass
+
+    def test_rejects_wrong_coordinate_dim(self):
+        """Should raise if last dim is not 3."""
+        positions = torch.randn(1, 1369, 4)
+        try:
+            pool_positions_to_sva_grid(positions)
+            assert False, "Should have raised ValueError"
+        except ValueError:
+            pass
+
+    def test_device_consistency(self):
+        """Output device matches input device."""
+        positions = torch.randn(1, 1369, 3)
+        pooled = pool_positions_to_sva_grid(positions)
+        assert pooled.device == positions.device
+
+    def test_gradient_flows(self):
+        """Pooling should be differentiable."""
+        positions = torch.randn(1, 1369, 3, requires_grad=True)
+        pooled = pool_positions_to_sva_grid(positions)
+        pooled.sum().backward()
+        assert positions.grad is not None
+        assert positions.grad.shape == positions.shape

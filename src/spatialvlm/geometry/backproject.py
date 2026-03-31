@@ -86,6 +86,7 @@ def aggregate_patches_percentile(
     pm = pm.permute(0, 1, 3, 2, 4, 5).contiguous()
     # Step 3: [B, n, px, 3]
     pm = pm.view(b, n, px, 3)
+    assert pm.shape == (b, n, px, 3), f"Reshape failed: expected {(b, n, px, 3)}, got {pm.shape}"
 
     # Reshape depth to [B, n_patches, pixels_per_patch]
     dp = depth.view(b, ph, patch_size, pw, patch_size)
@@ -111,5 +112,64 @@ def aggregate_patches_percentile(
     # expand sel_idx to [B, n, 1, 3] for gather on dim=2
     sel_idx_exp = sel_idx.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, 1, 3)
     patch_points = torch.gather(pm, dim=2, index=sel_idx_exp).squeeze(2)  # [B, n, 3]
+    assert patch_points.shape == (b, n, 3), f"Expected {(b, n, 3)}, got {patch_points.shape}"
 
     return patch_points  # [B, n_patches, 3]
+
+
+def pool_positions_to_sva_grid(
+    positions: torch.Tensor,
+    source_h: int = 37,
+    source_w: int = 37,
+    target_h: int = 24,
+    target_w: int = 24,
+) -> torch.Tensor:
+    """Pool 3D positions from the DINOv2 patch grid to the SVA query grid.
+
+    Each SVA query at grid cell (i, j) corresponds to a spatial sub-region of
+    the source (DINOv2/GATr) grid.  The 3D position assigned to that query is
+    the mean of the source positions that fall within its region.
+
+    This ensures geometric consistency: the fused token's content (from SVA
+    cross-attention over a spatial sub-region) and its positional encoding
+    (GridCellRoPE3D) describe the **same** physical area of the scene.
+
+    The mapping is identical to ``F.adaptive_avg_pool2d`` with output size
+    ``(target_h, target_w)``, which partitions the source grid into
+    ``target_h × target_w`` non-overlapping bins of size
+    ``floor(source/target)`` or ``ceil(source/target)`` and averages within
+    each bin.  This is the same spatial grouping that SVA's learnable queries
+    implicitly cover.
+
+    Parameters
+    ----------
+    positions : Tensor[B, N, 3]
+        Per-patch 3D positions on the source grid, where N = source_h * source_w.
+    source_h, source_w : int
+        Spatial dimensions of the source grid (37×37 for DINOv2).
+    target_h, target_w : int
+        Spatial dimensions of the SVA query grid (24×24 for SigLIP).
+
+    Returns
+    -------
+    pooled : Tensor[B, target_h * target_w, 3]
+        One representative 3D position per SVA query cell.
+    """
+    b, n, c = positions.shape
+    if n != source_h * source_w:
+        raise ValueError(
+            f"positions token count ({n}) != source_h*source_w ({source_h * source_w})."
+        )
+    if c != 3:
+        raise ValueError(f"positions last dim must be 3, got {c}.")
+
+    # Reshape to spatial grid: [B, 3, source_h, source_w]
+    spatial = positions.permute(0, 2, 1).reshape(b, 3, source_h, source_w)
+
+    # Adaptive average pool — same bin assignment as SVA's spatial sub-regions
+    pooled = torch.nn.functional.adaptive_avg_pool2d(
+        spatial, (target_h, target_w)
+    )  # [B, 3, target_h, target_w]
+
+    # Reshape back to token sequence: [B, target_h * target_w, 3]
+    return pooled.reshape(b, 3, target_h * target_w).permute(0, 2, 1).contiguous()

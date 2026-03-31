@@ -128,7 +128,7 @@ class SVACrossAttentionLayer(nn.Module):
         elif padding_mask is not None:
             attn_mask = padding_mask
 
-        if q.device.type == "cuda" and attn_mask is not None:
+        if attn_mask is not None:
             q = q.contiguous()
             k = k.contiguous()
             v = v.contiguous()
