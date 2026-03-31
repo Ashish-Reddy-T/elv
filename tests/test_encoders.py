@@ -8,8 +8,11 @@ Slow tests (marked @pytest.mark.slow, require HuggingFace downloads):
   - DINOv2Encoder: output shape, frozen params, CLS stripping
 """
 
+from types import SimpleNamespace
+
 import pytest
 import torch
+import torch.nn as nn
 
 from spatialvlm.encoders.projector import MLPProjector
 
@@ -77,6 +80,124 @@ class TestMLPProjector:
         out.backward()
         assert x.grad is not None
         assert not torch.all(x.grad == 0)
+
+
+class _IdentityBlock(nn.Module):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x
+
+
+class _DummySigLIPModel(nn.Module):
+    def __init__(self, hidden_size: int, num_layers: int, n_tokens: int) -> None:
+        super().__init__()
+        self._hidden_size = hidden_size
+        self._n_tokens = n_tokens
+        self.vision_model = nn.Module()
+        self.vision_model.encoder = nn.Module()
+        self.vision_model.encoder.layers = nn.ModuleList(
+            [_IdentityBlock() for _ in range(num_layers)]
+        )
+
+    def forward(self, pixel_values: torch.Tensor) -> torch.Tensor:
+        hidden = torch.ones(
+            pixel_values.shape[0],
+            self._n_tokens,
+            self._hidden_size,
+            device=pixel_values.device,
+            dtype=pixel_values.dtype,
+        )
+        for layer in self.vision_model.encoder.layers:
+            hidden = layer(hidden)
+        return hidden
+
+
+class _DummyDINOModel(nn.Module):
+    def __init__(self, hidden_size: int, num_layers: int, n_tokens: int) -> None:
+        super().__init__()
+        self._hidden_size = hidden_size
+        self._n_tokens = n_tokens
+        self.encoder = nn.Module()
+        self.encoder.layer = nn.ModuleList([_IdentityBlock() for _ in range(num_layers)])
+
+    def forward(self, pixel_values: torch.Tensor) -> torch.Tensor:
+        hidden = torch.ones(
+            pixel_values.shape[0],
+            self._n_tokens,
+            self._hidden_size,
+            device=pixel_values.device,
+            dtype=pixel_values.dtype,
+        )
+        for layer in self.encoder.layer:
+            hidden = layer(hidden)
+        return hidden
+
+
+def test_siglip_lazy_load_defers_weight_loading():
+    from spatialvlm.encoders.siglip import SigLIP2Encoder
+
+    calls = {"model": 0, "loader_kwargs": None}
+
+    def config_loader(model_id: str, **kwargs):  # noqa: ARG001
+        return SimpleNamespace(
+            vision_config=SimpleNamespace(
+                hidden_size=8,
+                num_hidden_layers=3,
+                patch_size=16,
+                image_size=32,
+            )
+        )
+
+    def model_loader(model_id: str, **kwargs):  # noqa: ARG001
+        calls["model"] += 1
+        calls["loader_kwargs"] = kwargs
+        return _DummySigLIPModel(hidden_size=8, num_layers=3, n_tokens=4)
+
+    encoder = SigLIP2Encoder(
+        model_id="dummy/siglip",
+        extract_layers=[1, 2, 3],
+        lazy_load=True,
+        local_files_only=True,
+        config_loader=config_loader,
+        model_loader=model_loader,
+    )
+    assert calls["model"] == 0
+    out = encoder(torch.randn(1, 3, 32, 32))
+    assert calls["model"] == 1
+    assert calls["loader_kwargs"] == {"local_files_only": True}
+    assert out.shape == (1, 4, 24)
+
+
+def test_dinov2_lazy_load_defers_weight_loading():
+    from spatialvlm.encoders.dinov2 import DINOv2Encoder
+
+    calls = {"model": 0, "loader_kwargs": None}
+
+    def config_loader(model_id: str, **kwargs):  # noqa: ARG001
+        return SimpleNamespace(
+            hidden_size=6,
+            num_hidden_layers=3,
+            patch_size=14,
+        )
+
+    def model_loader(model_id: str, **kwargs):  # noqa: ARG001
+        calls["model"] += 1
+        calls["loader_kwargs"] = kwargs
+        # Includes CLS token (1369 + 1)
+        return _DummyDINOModel(hidden_size=6, num_layers=3, n_tokens=1370)
+
+    encoder = DINOv2Encoder(
+        model_id="dummy/dinov2",
+        extract_layers=[1, 2, 3],
+        lazy_load=True,
+        local_files_only=True,
+        config_loader=config_loader,
+        model_loader=model_loader,
+    )
+    assert calls["model"] == 0
+    out = encoder(torch.randn(1, 3, 518, 518))
+    assert calls["model"] == 1
+    assert calls["loader_kwargs"] == {"local_files_only": True}
+    assert out.shape == (1, 1369, 18)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

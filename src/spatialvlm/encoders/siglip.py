@@ -23,6 +23,10 @@ Implementation note on hooks:
 
 from __future__ import annotations
 
+import inspect
+from collections.abc import Callable
+from typing import Any
+
 import torch
 import torch.nn as nn
 from transformers import AutoConfig, AutoModel
@@ -68,6 +72,27 @@ def _find_encoder_layers(model: nn.Module) -> nn.ModuleList:
     )
 
 
+def _call_loader(
+    loader: Callable[..., Any],
+    model_id: str,
+    **kwargs: Any,
+) -> Any:
+    """Call loader with supported kwargs only."""
+    try:
+        signature = inspect.signature(loader)
+    except (TypeError, ValueError):
+        return loader(model_id, **kwargs)
+
+    accepts_var_kwargs = any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in signature.parameters.values()
+    )
+    if accepts_var_kwargs:
+        return loader(model_id, **kwargs)
+
+    supported_kwargs = {k: v for k, v in kwargs.items() if k in signature.parameters}
+    return loader(model_id, **supported_kwargs)
+
+
 class SigLIP2Encoder(nn.Module):
     """SigLIP2-SO400M encoder with multi-layer feature extraction.
 
@@ -89,6 +114,10 @@ class SigLIP2Encoder(nn.Module):
         model_id: str = "google/siglip2-so400m-patch16-naflex",
         extract_layers: list[int] | None = None,
         device: torch.device | None = None,
+        lazy_load: bool = False,
+        local_files_only: bool = False,
+        config_loader: Callable[..., Any] = AutoConfig.from_pretrained,
+        model_loader: Callable[..., nn.Module] = AutoModel.from_pretrained,
     ) -> None:
         super().__init__()
 
@@ -98,18 +127,14 @@ class SigLIP2Encoder(nn.Module):
         if device is None:
             device = torch.device("cpu")
 
-        # Load model and config — ⚠ dimensions must come from config, not hardcoded values
-        cfg = AutoConfig.from_pretrained(model_id)
-        model = AutoModel.from_pretrained(model_id)
-        model = model.to(device)
-
-        # Freeze all encoder parameters
-        for param in model.parameters():
-            param.requires_grad_(False)
-        model.eval()
+        self._model_id = model_id
+        self._device = device
+        self._local_files_only = local_files_only
+        self._model_loader = model_loader
 
         # Introspect architecture from config
         # SigLIP2 wraps SigLIP vision config; try common attribute paths
+        cfg = _call_loader(config_loader, model_id, local_files_only=local_files_only)
         vision_cfg = getattr(cfg, "vision_config", cfg)
         self._hidden_size: int = int(vision_cfg.hidden_size)  # ⚠ verified from config
         self._num_layers: int = int(vision_cfg.num_hidden_layers)  # ⚠ verified from config
@@ -125,8 +150,7 @@ class SigLIP2Encoder(nn.Module):
                 )
 
         self._extract_layers = sorted(extract_layers)
-        self._model = model
-        self._device = device
+        self._model: nn.Module | None = None
 
         # Expected patch count (derived from verified config values)
         patches_per_side = self._image_size // self._patch_size
@@ -137,13 +161,30 @@ class SigLIP2Encoder(nn.Module):
         self._hook_outputs: dict[int, torch.Tensor] = {}
         self._hooks: list[torch.utils.hooks.RemovableHook] = []
 
-        encoder_layers = _find_encoder_layers(self._model)
+        if not lazy_load:
+            self.load_model()
 
+    def load_model(self) -> None:
+        """Load SigLIP weights and register extraction hooks."""
+        if self._model is not None:
+            return
+
+        model = _call_loader(
+            self._model_loader,
+            self._model_id,
+            local_files_only=self._local_files_only,
+        )
+        model = model.to(self._device)
+
+        for param in model.parameters():
+            param.requires_grad_(False)
+        model.eval()
+
+        self._model = model
+        encoder_layers = _find_encoder_layers(self._model)
         for layer_1idx in self._extract_layers:
-            layer_0idx = layer_1idx - 1  # convert to 0-indexed
-            hook = encoder_layers[layer_0idx].register_forward_hook(
-                self._make_hook(layer_0idx)
-            )
+            layer_0idx = layer_1idx - 1
+            hook = encoder_layers[layer_0idx].register_forward_hook(self._make_hook(layer_0idx))
             self._hooks.append(hook)
 
     def _make_hook(self, layer_0idx: int):
@@ -171,8 +212,11 @@ class SigLIP2Encoder(nn.Module):
             Channel-concatenated features from all extraction layers.
             For default config: [B, 576, 3456]  (576 = 24², 3456 = 3 × 1152)
         """
-        self._hook_outputs.clear()
+        self.load_model()
+        if self._model is None:
+            raise RuntimeError("SigLIP model is unavailable. Call load_model() before forward().")
 
+        self._hook_outputs.clear()
         with torch.no_grad():
             _ = self._model(pixel_values=pixel_values)
 
@@ -200,7 +244,7 @@ class SigLIP2Encoder(nn.Module):
 
     def __del__(self) -> None:
         # Clean up hooks when the encoder is garbage collected
-        for hook in self._hooks:
+        for hook in getattr(self, "_hooks", []):
             hook.remove()
 
     @property

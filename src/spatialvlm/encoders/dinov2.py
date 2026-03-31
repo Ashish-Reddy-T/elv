@@ -17,6 +17,10 @@ Resolution choice (518px):
 
 from __future__ import annotations
 
+import inspect
+from collections.abc import Callable
+from typing import Any
+
 import torch
 import torch.nn as nn
 from transformers import AutoConfig, AutoModel
@@ -55,6 +59,27 @@ def _find_dinov2_encoder_layers(model: nn.Module) -> nn.ModuleList:
     )
 
 
+def _call_loader(
+    loader: Callable[..., Any],
+    model_id: str,
+    **kwargs: Any,
+) -> Any:
+    """Call loader with supported kwargs only."""
+    try:
+        signature = inspect.signature(loader)
+    except (TypeError, ValueError):
+        return loader(model_id, **kwargs)
+
+    accepts_var_kwargs = any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in signature.parameters.values()
+    )
+    if accepts_var_kwargs:
+        return loader(model_id, **kwargs)
+
+    supported_kwargs = {k: v for k, v in kwargs.items() if k in signature.parameters}
+    return loader(model_id, **supported_kwargs)
+
+
 class DINOv2Encoder(nn.Module):
     """DINOv2-L encoder with multi-layer feature extraction.
 
@@ -75,6 +100,10 @@ class DINOv2Encoder(nn.Module):
         model_id: str = "facebook/dinov2-large",
         extract_layers: list[int] | None = None,
         device: torch.device | None = None,
+        lazy_load: bool = False,
+        local_files_only: bool = False,
+        config_loader: Callable[..., Any] = AutoConfig.from_pretrained,
+        model_loader: Callable[..., nn.Module] = AutoModel.from_pretrained,
     ) -> None:
         super().__init__()
 
@@ -84,17 +113,13 @@ class DINOv2Encoder(nn.Module):
         if device is None:
             device = torch.device("cpu")
 
-        # Load model and verify architecture from config
-        cfg = AutoConfig.from_pretrained(model_id)
-        model = AutoModel.from_pretrained(model_id)
-        model = model.to(device)
-
-        # Freeze all parameters
-        for param in model.parameters():
-            param.requires_grad_(False)
-        model.eval()
+        self._model_id = model_id
+        self._device = device
+        self._local_files_only = local_files_only
+        self._model_loader = model_loader
 
         # Introspect config — ⚠ all values from cfg, never hardcoded
+        cfg = _call_loader(config_loader, model_id, local_files_only=local_files_only)
         self._hidden_size: int = int(cfg.hidden_size)         # ⚠ verified
         self._num_layers: int = int(cfg.num_hidden_layers)    # ⚠ verified
         self._patch_size: int = int(cfg.patch_size)           # ⚠ verified
@@ -108,8 +133,7 @@ class DINOv2Encoder(nn.Module):
                 )
 
         self._extract_layers = sorted(extract_layers)
-        self._model = model
-        self._device = device
+        self._model: nn.Module | None = None
 
         # Our design choice: 518px input → 37×37 = 1369 patches (no pooling)
         # The patch count is validated during the first forward pass
@@ -120,13 +144,30 @@ class DINOv2Encoder(nn.Module):
         self._hook_outputs: dict[int, torch.Tensor] = {}
         self._hooks: list[torch.utils.hooks.RemovableHook] = []
 
-        encoder_layers = _find_dinov2_encoder_layers(self._model)
+        if not lazy_load:
+            self.load_model()
 
+    def load_model(self) -> None:
+        """Load DINOv2 weights and register extraction hooks."""
+        if self._model is not None:
+            return
+
+        model = _call_loader(
+            self._model_loader,
+            self._model_id,
+            local_files_only=self._local_files_only,
+        )
+        model = model.to(self._device)
+
+        for param in model.parameters():
+            param.requires_grad_(False)
+        model.eval()
+
+        self._model = model
+        encoder_layers = _find_dinov2_encoder_layers(self._model)
         for layer_1idx in self._extract_layers:
-            layer_0idx = layer_1idx - 1  # 0-indexed
-            hook = encoder_layers[layer_0idx].register_forward_hook(
-                self._make_hook(layer_0idx)
-            )
+            layer_0idx = layer_1idx - 1
+            hook = encoder_layers[layer_0idx].register_forward_hook(self._make_hook(layer_0idx))
             self._hooks.append(hook)
 
     def _make_hook(self, layer_0idx: int):
@@ -153,8 +194,11 @@ class DINOv2Encoder(nn.Module):
             CLS-stripped, channel-concatenated features.
             For default config: [B, 1369, 3072]  (1369 = 37², 3072 = 3 × 1024)
         """
-        self._hook_outputs.clear()
+        self.load_model()
+        if self._model is None:
+            raise RuntimeError("DINOv2 model is unavailable. Call load_model() before forward().")
 
+        self._hook_outputs.clear()
         with torch.no_grad():
             _ = self._model(pixel_values=pixel_values)
 
@@ -183,7 +227,7 @@ class DINOv2Encoder(nn.Module):
         return torch.cat(features, dim=-1)  # [B, n_patches, n_layers × hidden_size]
 
     def __del__(self) -> None:
-        for hook in self._hooks:
+        for hook in getattr(self, "_hooks", []):
             hook.remove()
 
     @property

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -29,6 +30,27 @@ def _resolve_text_config(config: Any) -> Any:
     """Return the text config object for multimodal configs, or config itself for text-only."""
     text_cfg = getattr(config, "text_config", None)
     return text_cfg if text_cfg is not None else config
+
+
+def _call_loader(
+    loader: Callable[..., Any],
+    model_id: str,
+    **kwargs: Any,
+) -> Any:
+    """Call loader with supported kwargs only."""
+    try:
+        signature = inspect.signature(loader)
+    except (TypeError, ValueError):
+        return loader(model_id, **kwargs)
+
+    accepts_var_kwargs = any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in signature.parameters.values()
+    )
+    if accepts_var_kwargs:
+        return loader(model_id, **kwargs)
+
+    supported_kwargs = {k: v for k, v in kwargs.items() if k in signature.parameters}
+    return loader(model_id, **supported_kwargs)
 
 
 @dataclass
@@ -63,6 +85,8 @@ class Qwen3VLBackbone(nn.Module):
         peft_model_factory: Callable[[nn.Module, Any], nn.Module] | None = None,
         lora_config_factory: Callable[..., Any] | None = None,
         task_type_causal_lm: Any | None = None,
+        lazy_load: bool = False,
+        local_files_only: bool = False,
     ) -> None:
         super().__init__()
         if device is None:
@@ -73,8 +97,22 @@ class Qwen3VLBackbone(nn.Module):
         self.lora_alpha = lora_alpha
         self.lora_dropout = lora_dropout
         self.lora_target_modules = tuple(lora_target_modules)
+        self._device = device
+        self._torch_dtype = torch_dtype
+        self._local_files_only = local_files_only
+        self._model_loader = model_loader
+        self._freeze_base_model = freeze_base_model
+        self._enable_lora = enable_lora
+        self._apply_peft_2880_workaround = apply_peft_2880_workaround
+        self._peft_model_factory = peft_model_factory
+        self._lora_config_factory = lora_config_factory
+        self._task_type_causal_lm = task_type_causal_lm
 
-        self.config = config if config is not None else config_loader(model_id)
+        self.config = (
+            config
+            if config is not None
+            else _call_loader(config_loader, model_id, local_files_only=local_files_only)
+        )
         text_cfg = _resolve_text_config(self.config)
         self.hidden_size = int(getattr(text_cfg, "hidden_size"))
         self.num_hidden_layers = int(getattr(text_cfg, "num_hidden_layers"))
@@ -85,54 +123,18 @@ class Qwen3VLBackbone(nn.Module):
         self.head_dim = self.hidden_size // self.num_attention_heads
         self.mrope_section = _extract_mrope_section(text_cfg)
         self.rotary_pairs = sum(self.mrope_section) if self.mrope_section else (self.head_dim // 2)
+        self.model: nn.Module | None = None
+        self._stats: Qwen3BackboneStats | None = None
 
-        if model is None:
-            loader_kwargs: dict[str, Any] = {"trust_remote_code": True}
-            if torch_dtype is not None:
-                loader_kwargs["torch_dtype"] = torch_dtype
-            model = model_loader(model_id, **loader_kwargs)
-        self.model = model.to(device)
-
-        if freeze_base_model:
-            self.freeze_all_parameters()
-
-        if enable_lora:
-            if (
-                peft_model_factory is None
-                or lora_config_factory is None
-                or task_type_causal_lm is None
-            ):
-                from peft import LoraConfig, TaskType, get_peft_model
-
-                peft_model_factory = get_peft_model
-                lora_config_factory = LoraConfig
-                task_type_causal_lm = TaskType.CAUSAL_LM
-
-            lora_cfg = lora_config_factory(
-                r=lora_rank,
-                lora_alpha=lora_alpha,
-                lora_dropout=lora_dropout,
-                target_modules=list(self.lora_target_modules),
-                bias="none",
-                task_type=task_type_causal_lm,
-            )
-            self.model = peft_model_factory(self.model, lora_cfg)
-
-        modules_touched = 0
-        params_touched = 0
-        if apply_peft_2880_workaround:
-            modules_touched, params_touched = self.enable_peft_2880_workaround()
-
-        self._stats = Qwen3BackboneStats(
-            trainable_params=self._count_trainable_params(),
-            total_params=self._count_total_params(),
-            peft_2880_modules_touched=modules_touched,
-            peft_2880_params_touched=params_touched,
-        )
-        self.to(device)
+        if model is not None:
+            self._initialize_loaded_model(model)
+        elif not lazy_load:
+            self.load_model()
 
     def freeze_all_parameters(self) -> None:
         """Freeze all current model parameters."""
+        if self.model is None:
+            return
         for p in self.model.parameters():
             p.requires_grad_(False)
 
@@ -142,6 +144,9 @@ class Qwen3VLBackbone(nn.Module):
         qkv_keywords: Sequence[str] = ("q_proj", "k_proj", "v_proj"),
     ) -> tuple[int, int]:
         """Set `requires_grad=True` on vision QKV modules to avoid PEFT bug #2880 behavior."""
+        if self.model is None:
+            return (0, 0)
+
         modules_touched = 0
         params_touched = 0
         for module_name, module in self.model.named_modules():
@@ -165,15 +170,92 @@ class Qwen3VLBackbone(nn.Module):
         return modules_touched, params_touched
 
     def _count_trainable_params(self) -> int:
+        if self.model is None:
+            return 0
         return sum(p.numel() for p in self.model.parameters() if p.requires_grad)
 
     def _count_total_params(self) -> int:
+        if self.model is None:
+            return 0
         return sum(p.numel() for p in self.model.parameters())
 
     @property
+    def is_model_loaded(self) -> bool:
+        return self.model is not None
+
+    def _initialize_loaded_model(self, model: nn.Module) -> None:
+        model = model.to(self._device)
+        self.model = model
+
+        if self._freeze_base_model:
+            self.freeze_all_parameters()
+
+        if self._enable_lora:
+            peft_model_factory = self._peft_model_factory
+            lora_config_factory = self._lora_config_factory
+            task_type_causal_lm = self._task_type_causal_lm
+            if (
+                peft_model_factory is None
+                or lora_config_factory is None
+                or task_type_causal_lm is None
+            ):
+                from peft import LoraConfig, TaskType, get_peft_model
+
+                peft_model_factory = get_peft_model
+                lora_config_factory = LoraConfig
+                task_type_causal_lm = TaskType.CAUSAL_LM
+
+            lora_cfg = lora_config_factory(
+                r=self.lora_rank,
+                lora_alpha=self.lora_alpha,
+                lora_dropout=self.lora_dropout,
+                target_modules=list(self.lora_target_modules),
+                bias="none",
+                task_type=task_type_causal_lm,
+            )
+            self.model = peft_model_factory(self.model, lora_cfg)
+
+        modules_touched = 0
+        params_touched = 0
+        if self._apply_peft_2880_workaround:
+            modules_touched, params_touched = self.enable_peft_2880_workaround()
+
+        self._stats = Qwen3BackboneStats(
+            trainable_params=self._count_trainable_params(),
+            total_params=self._count_total_params(),
+            peft_2880_modules_touched=modules_touched,
+            peft_2880_params_touched=params_touched,
+        )
+        self.to(self._device)
+
+    def load_model(self) -> None:
+        """Load backbone weights when lazy initialization is enabled."""
+        if self.model is not None:
+            return
+
+        loader_kwargs: dict[str, Any] = {
+            "trust_remote_code": True,
+            "local_files_only": self._local_files_only,
+        }
+        if self._torch_dtype is not None:
+            loader_kwargs["torch_dtype"] = self._torch_dtype
+        model = _call_loader(self._model_loader, self.model_id, **loader_kwargs)
+        self._initialize_loaded_model(model)
+
+    @property
     def stats(self) -> Qwen3BackboneStats:
+        if self._stats is None:
+            return Qwen3BackboneStats(
+                trainable_params=0,
+                total_params=0,
+                peft_2880_modules_touched=0,
+                peft_2880_params_touched=0,
+            )
         return self._stats
 
     def forward(self, *args: Any, **kwargs: Any) -> Any:
         """Delegate forward pass to wrapped model."""
+        self.load_model()
+        if self.model is None:
+            raise RuntimeError("Qwen3 model is unavailable. Call load_model() before forward().")
         return self.model(*args, **kwargs)

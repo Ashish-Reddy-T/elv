@@ -116,3 +116,38 @@ class TestQwen3VLBackbone:
         x = torch.randn(2, 4, 8)
         out = wrapper(x)
         assert out.shape == (2, 4, 8)
+
+    def test_lazy_load_defers_model_loader_until_forward(self):
+        called = {"config": 0, "model": 0, "loader_kwargs": None}
+
+        def fake_config_loader(model_id: str, **kwargs):
+            called["config"] += 1
+            return make_dummy_config()
+
+        def fake_model_loader(model_id: str, **kwargs):
+            called["model"] += 1
+            called["loader_kwargs"] = kwargs
+            return DummyModel()
+
+        wrapper = Qwen3VLBackbone(
+            model_id="dummy/model",
+            enable_lora=False,
+            apply_peft_2880_workaround=False,
+            lazy_load=True,
+            local_files_only=True,
+            config_loader=fake_config_loader,
+            model_loader=fake_model_loader,
+        )
+        assert called["config"] == 1
+        assert called["model"] == 0
+        assert not wrapper.is_model_loaded
+        assert wrapper.stats.total_params == 0
+
+        out = wrapper(torch.randn(1, 2, 8))
+        assert out.shape == (1, 2, 8)
+        assert called["model"] == 1
+        assert called["loader_kwargs"] == {
+            "trust_remote_code": True,
+            "local_files_only": True,
+        }
+        assert wrapper.is_model_loaded
