@@ -51,9 +51,9 @@
 - [x] Verify PEFT bug #2880 workaround (manual requires_grad=True on ViT QKV)
 
 ## Phase 6: Data Pipeline
-- [ ] `src/spatialvlm/data/habitat_env.py` — Habitat 3.0 wrapper (RGB + depth @ 518x518)
-- [ ] `src/spatialvlm/data/datasets.py` — R2R-CE, RxR-CE, SQA3D loaders
-- [ ] `src/spatialvlm/data/preprocessing.py` — image resize, depth normalization
+- [x] `src/spatialvlm/data/habitat_env.py` — Habitat 3.0 wrapper (RGB + depth @ 518x518)
+- [x] `src/spatialvlm/data/datasets.py` — R2R-CE, RxR-CE, SQA3D loaders
+- [x] `src/spatialvlm/data/preprocessing.py` — image resize, depth normalization
 
 ## Phase 7: Training Pipeline
 - [ ] `src/spatialvlm/training/prealign.py` — Stage 1: projectors only (~77M), LLaVA-558K
