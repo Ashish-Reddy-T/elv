@@ -1,0 +1,61 @@
+stage: grpo
+seed: 42
+device: cpu
+
+model:
+  backbone_model_id: Qwen/Qwen3-VL-8B-Instruct
+  lora_rank: 32
+  lora_alpha: 64
+
+training:
+  epochs: 6
+  batch_size_prompts: 32
+  group_size: 8
+  max_response_tokens: 2048
+  learning_rate: 5.0e-7
+  weight_decay: 0.0
+  max_grad_norm: 1.0
+  clip_epsilon: 0.2
+  kl_beta: 0.001
+  entropy_beta: 0.0
+  normalize_advantages: true
+  replay_capacity: 4096
+  replay_advantage_threshold: 0.05
+
+curriculum:
+  points:
+    - epoch: 1
+      weights:
+        format: 1.0
+        progress: 0.1
+        collision: 0.1
+        goal: 0.1
+        consistency: 0.0
+    - epoch: 3
+      weights:
+        format: 0.4
+        progress: 0.4
+        collision: 0.3
+        goal: 0.5
+        consistency: 0.2
+    - epoch: 5
+      weights:
+        format: 0.1
+        progress: 0.7
+        collision: 0.6
+        goal: 1.0
+        consistency: 0.6
+
+environment:
+  python: "3.12.2"
+  torch: "2.5.1"
+  transformers: "4.57.6"
+  peft: "0.15.2"
+  trl: "0.18.1"
+  accelerate: "1.6.0"
+  einops: "0.8.1"
+  xformers: "0.0.29.post1"
+  omegaconf: "2.3.0"
+  numpy: "2.3.5"
+  opt_einsum_commit: "1a984b7b75f3e532e7129f6aa13f7ddc3da66e10"
+  gatr_install: "pip install -e REPOS/geometric-algebra-transformer --no-deps"

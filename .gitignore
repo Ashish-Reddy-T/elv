@@ -20,7 +20,6 @@ env/
 *.swo
 
 # Data & checkpoints
-data/
 checkpoints/
 outputs/
 wandb/

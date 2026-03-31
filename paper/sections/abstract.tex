@@ -1,0 +1,5 @@
+SpatialVLM targets indoor navigation as a representation-learning problem: modern VLM pipelines
+discard spatial structure before language reasoning. We recover this structure by combining dual
+vision encoders, geometric depth-aware processing, typed fusion, and RL post-training. The core
+diagnostic is a permutation test: shuffling vision tokens should be catastrophic only when the
+model actually uses spatial ordering.

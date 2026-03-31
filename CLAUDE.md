@@ -21,7 +21,9 @@ Stage 1: Dual Vision Encoding
 Stage 2: Geometric Branch (parallel to Stage 1)
   GT Depth @ 518x518 → backproject → 15th-percentile aggregation → [B, 1369, 3]
   GATr (8 equivariant blocks, PGA)                               → [B, 1369, 4096]
-  GridCellRoPE3D (4 tetra dirs × 8 freqs × sin/cos)              → [B, 1369, 64]  (stored)
+  SVA-aligned position pooling: 37×37 → 24×24 (same spatial      → [B, 576, 3]
+    grouping as SVA query regions — content and position must match)
+  GridCellRoPE3D (4 tetra dirs × 8 freqs × sin/cos)              → [B, 576, 64]   (stored)
 
 Stage 3: Fusion
   SVA cross-attention: 576 queries attend 3314 KV tokens          → [B, 576, 4096]
@@ -115,6 +117,14 @@ ablations/
 
 ## Implementation Guidelines
 
+### Device Policy
+
+- **NEVER hardcode `cuda`**. Always use a `device` parameter or resolve it at the top level (could be cuda, mps, cpu etc.):
+- Pass `device` through constructors and `.to(device)` calls. This ensures compatibility
+  with CPU-only debugging, Docker containers, and multi-GPU setups (where device = `cuda:1` etc).
+- Tensors created inside modules (e.g. `torch.zeros(...)`) must inherit device from input
+  tensors or an explicit device arg — never default to CPU silently.
+
 ### Code Style
 
 - Python 3.10+, type hints on all public functions.
@@ -133,61 +143,73 @@ ablations/
 - Test numerical edge cases: zero depth, NaN, very large coordinates.
 - Run `make test` before any commit.
 
-### Critical Numerical Values (DO NOT HALLUCINATE)
+### Critical Numerical Values — VERIFY AT RUNTIME
 
-These are verified ground-truth values. Always cross-reference before using:
+**WARNING: Architecture constants for pre-trained models (Qwen3-VL, SigLIP2, DINOv2) MUST be
+introspected from the loaded model at runtime, not hardcoded from documentation or memory.**
+Documentation can be wrong, model versions can differ, and LLMs (including Claude) hallucinate
+numerical details. The values below are our _best current understanding_ but every one marked
+with `# ⚠ VERIFY` must be confirmed by loading the model and reading its config.
+
+**Verification pattern** (use this before trusting any constant):
 
 ```python
-# Qwen3-VL-8B
-HIDDEN_SIZE = 4096
-NUM_LAYERS = 36
-NUM_HEADS = 32
-NUM_KV_HEADS = 8
-HEAD_DIM = 128
-MROPE_SECTION = [24, 20, 20]  # temporal, height, width
-ROTARY_PAIRS = 64              # sum of mrope_section
+from transformers import AutoConfig
+cfg = AutoConfig.from_pretrained("Qwen/Qwen3-VL-8B-Instruct")
+print(cfg.to_dict())  # read ALL values from here, not from memory
+```
 
-# SigLIP2
-SIGLIP_PATCH_SIZE = 16
-SIGLIP_INPUT_RES = 384
-SIGLIP_PATCHES = 576           # 24 * 24
-SIGLIP_HIDDEN = 1152
-SIGLIP_DEPTH = 27
-SIGLIP_EXTRACT_LAYERS = [9, 18, 27]  # evenly-spaced thirds
+```python
+# Qwen3-VL-8B — ⚠ VERIFY all from AutoConfig.from_pretrained()
+HIDDEN_SIZE = 4096              # ⚠ VERIFY: cfg.hidden_size
+NUM_LAYERS = 36                 # ⚠ VERIFY: cfg.num_hidden_layers
+NUM_HEADS = 32                  # ⚠ VERIFY: cfg.num_attention_heads
+NUM_KV_HEADS = 8                # ⚠ VERIFY: cfg.num_key_value_heads
+HEAD_DIM = 128                  # ⚠ VERIFY: cfg.hidden_size // cfg.num_attention_heads
+MROPE_SECTION = [24, 20, 20]    # ⚠ VERIFY: cfg.rope_scaling.mrope_section
+ROTARY_PAIRS = 64               # ⚠ VERIFY: sum(MROPE_SECTION)
 
-# DINOv2-L
-DINO_PATCH_SIZE = 14
-DINO_INPUT_RES = 518
-DINO_PATCHES = 1369            # 37 * 37
-DINO_HIDDEN = 1024
-DINO_DEPTH = 24
-DINO_EXTRACT_LAYERS = [8, 16, 24]
+# SigLIP2 — ⚠ VERIFY from Qwen3-VL's vision_config or standalone model
+SIGLIP_PATCH_SIZE = 16          # ⚠ VERIFY: cfg.vision_config.patch_size
+SIGLIP_INPUT_RES = 384          # ⚠ VERIFY: cfg.vision_config.image_size
+SIGLIP_PATCHES = 576            # derived: (384/16)^2 — but verify image_size & patch_size first
+SIGLIP_HIDDEN = 1152            # ⚠ VERIFY: cfg.vision_config.hidden_size
+SIGLIP_DEPTH = 27               # ⚠ VERIFY: cfg.vision_config.num_hidden_layers
+SIGLIP_EXTRACT_LAYERS = [9, 18, 27]  # ⚠ VERIFY: check deepstack config or model source
 
-# GridCellRoPE3D
-TETRA_DIRS = 4                 # tetrahedral directions
-NUM_FREQS = 8                  # golden-ratio spaced
+# DINOv2-L — ⚠ VERIFY from facebook/dinov2-large config
+DINO_PATCH_SIZE = 14            # ⚠ VERIFY
+DINO_INPUT_RES = 518            # our choice (518/14 = 37 exact), not model default
+DINO_PATCHES = 1369             # derived: (518/14)^2
+DINO_HIDDEN = 1024              # ⚠ VERIFY
+DINO_DEPTH = 24                 # ⚠ VERIFY
+DINO_EXTRACT_LAYERS = [8, 16, 24]  # our design choice (evenly-spaced thirds)
+
+# GridCellRoPE3D — our design, not from any pretrained model
+TETRA_DIRS = 4                  # tetrahedral directions (our design)
+NUM_FREQS = 8                   # golden-ratio spaced (our design)
 GOLDEN_RATIO = 1.618033988749895
-BASE_FREQ = 10.0               # f_k = 10 * phi^k
-ROTARY_DIMS = 64               # 4 * 8 * 2, matches Qwen3's 64 pairs
+BASE_FREQ = 10.0                # f_k = 10 * phi^k (our design)
+ROTARY_DIMS = 64                # 4 * 8 * 2, MUST match Qwen3's rotary pairs
 
-# GATr
-GATR_BLOCKS = 8
-GATR_MV_CHANNELS = 16          # multivector channels
-GATR_SCALAR_CHANNELS = 32
-PGA_DIM = 16                   # projective geometric algebra basis dimension
-GATR_INVARIANT_DIM = 48        # 32 scalars + 16 mv norms
+# GATr — ⚠ VERIFY against REPOS/geometric-algebra-transformer defaults
+GATR_BLOCKS = 8                 # our config choice
+GATR_MV_CHANNELS = 16           # ⚠ VERIFY: check GATr default config
+GATR_SCALAR_CHANNELS = 32       # ⚠ VERIFY: check GATr default config
+PGA_DIM = 16                    # PGA basis dimension (mathematical constant)
+GATR_INVARIANT_DIM = 48         # derived: GATR_SCALAR_CHANNELS + GATR_MV_CHANNELS
 
-# SVA
-SVA_NUM_QUERIES = 576          # 24 * 24 grid
-SVA_KV_TOKENS = 3314           # 576 + 1369 + 1369
+# SVA — derived from encoder outputs
+SVA_NUM_QUERIES = 576           # matches SigLIP patch count
+SVA_KV_TOKENS = 3314            # 576 + 1369 + 1369
 SVA_LAYERS = 2
 
 # Gated Cross-Attention
-CROSS_ATTN_LAYERS = [4, 8, 12, 16, 20, 24, 28, 32, 36]  # 9 injection points
+CROSS_ATTN_LAYERS = [4, 8, 12, 16, 20, 24, 28, 32, 36]  # every 4th of 36 layers
 
 # Backprojection
-DEPTH_PERCENTILE = 0.15        # 15th percentile foreground bias
-DEPTH_MAP_RES = 518            # matches DINOv2 input
+DEPTH_PERCENTILE = 0.15         # 15th percentile foreground bias (our design)
+DEPTH_MAP_RES = 518             # matches DINOv2 input (our choice)
 
 # Training
 LORA_RANK = 32
@@ -196,6 +218,10 @@ GRPO_GROUP_SIZE = 8
 GRPO_CLIP_EPS = 0.2
 GRPO_KL_BETA = 0.001
 ```
+
+**Rule: When implementing any module that uses a pre-trained model's dimensions, load the
+config first and read from it. Never copy-paste numbers from this file into code. Use
+`model.config.hidden_size` not `4096`.**
 
 ### Module Dependencies (build order)
 
@@ -247,6 +273,21 @@ Integration (depends on all above):
 6. **Habitat depth at 518x518**: Must render depth at DINOv2's input resolution for
    pixel-perfect patch alignment. Default Habitat depth resolution is different.
 
+### Scope: GT Depth Only (No Depth Anything V2)
+
+The primary system uses **Habitat GT depth exclusively**. Depth Anything V2 is NOT part of
+the main architecture — it exists only as a single diagnostic ablation row (H2c) to quantify
+the sim-to-real transfer gap. This means:
+
+- **No real-image benchmarks in the core evaluation.** Benchmarks like What's Up that use
+  real photos (no GT depth available) are out-of-scope for the main results. They can be
+  added as supplementary experiments later to see how the model generalizes, but they are
+  NOT part of the primary evaluation pipeline.
+- **Primary benchmarks are all Habitat/simulation-based**: VLN-CE (R2R, RxR), ObjectNav HM3D,
+  SQA3D (ScanNet reconstructions with available depth), VSI-Bench, NavTrust.
+- The Depth Anything V2 ablation (H2c) is implemented last, as a nice-to-have comparison.
+  It is explicitly deprioritized relative to the core architecture and ablations.
+
 ### Commit Conventions
 
 - Prefix: `feat:`, `fix:`, `test:`, `refactor:`, `docs:`, `exp:` (for experiment results)
@@ -290,3 +331,5 @@ Track these — every module exists to test one or more:
 - `docs/architecture.md` — dimensional analysis of every tensor in the pipeline
 - `docs/critique.md` — feasibility analysis and competitive landscape
 - `notes/points.txt` — research notes (LoRA feasibility concern, typed attention bias idea)
+
+Update `TODO.md` each time after completing a phase!

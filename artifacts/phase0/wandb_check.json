@@ -1,0 +1,11 @@
+{
+  "project": "spatialvlm",
+  "entity": null,
+  "mode": "offline",
+  "status": "ok",
+  "message": "wandb init/log/finish succeeded.",
+  "details": {
+    "wandb_version": "0.20.1",
+    "api_key_present": true
+  }
+}

@@ -1,0 +1,300 @@
+{
+  "config": {
+    "ablations": {
+      "enabled": true,
+      "ids": [
+        "no-gridcell-rope3d",
+        "no-gatr",
+        "siglip-only",
+        "dinov2-only",
+        "no-rms-norm-matching",
+        "no-typed-attn-bias"
+      ]
+    },
+    "benchmarks": {
+      "primary": [
+        "vlnce-r2r",
+        "vlnce-rxr",
+        "objectnav-hm3d",
+        "sqa3d",
+        "vsi-bench",
+        "navtrust"
+      ],
+      "supplementary": [
+        "whats-up",
+        "cv-bench"
+      ]
+    },
+    "environment": {
+      "accelerate": "1.6.0",
+      "einops": "0.8.1",
+      "gatr_install": "pip install -e REPOS/geometric-algebra-transformer --no-deps",
+      "numpy": "2.3.5",
+      "omegaconf": "2.3.0",
+      "opt_einsum_commit": "1a984b7b75f3e532e7129f6aa13f7ddc3da66e10",
+      "peft": "0.15.2",
+      "python": "3.12.2",
+      "torch": "2.5.1",
+      "transformers": "4.57.6",
+      "trl": "0.18.1",
+      "xformers": "0.0.29.post1"
+    },
+    "evaluation": {
+      "device": "cpu",
+      "include_supplementary_real_image_benchmarks": false,
+      "seed": 42
+    },
+    "metrics": {
+      "composite_weights": {
+        "permutation_sensitivity": 0.2,
+        "spl": 0.4,
+        "success_rate": 0.4
+      }
+    },
+    "permutation_test": {
+      "baseline_reference_drop_target": 0.03,
+      "enabled": true,
+      "expected_relative_drop_threshold": 0.15,
+      "num_permutations": 64,
+      "spatial_mask_key": "spatial_mask",
+      "token_key": "vision_tokens"
+    }
+  },
+  "coverage_complete": true,
+  "missing_runs": [],
+  "runs": {
+    "concat-fusion": {
+      "config_overrides": {
+        "fusion.concat_fusion_only": true,
+        "fusion.use_gated_cross_attn": false,
+        "fusion.use_sva": false
+      },
+      "delta_vs_full_model": null,
+      "hypotheses": [
+        "H3a"
+      ],
+      "notes": "",
+      "run_id": "concat-fusion",
+      "score": null,
+      "status": "pending",
+      "title": "Concatenation fusion (no SVA/cross-attn)"
+    },
+    "dense-vs-sparse-rewards": {
+      "config_overrides": {
+        "training.reward_mode": "sparse"
+      },
+      "delta_vs_full_model": null,
+      "hypotheses": [
+        "H5c"
+      ],
+      "notes": "",
+      "run_id": "dense-vs-sparse-rewards",
+      "score": null,
+      "status": "pending",
+      "title": "Dense vs sparse rewards"
+    },
+    "dinov2-only": {
+      "config_overrides": {
+        "model.use_gatr": false,
+        "model.use_siglip": false
+      },
+      "delta_vs_full_model": null,
+      "hypotheses": [
+        "H1a"
+      ],
+      "notes": "",
+      "run_id": "dinov2-only",
+      "score": null,
+      "status": "pending",
+      "title": "DINOv2 only"
+    },
+    "dinov2-pooled-576": {
+      "config_overrides": {
+        "encoder.dinov2_pool_to_queries": true
+      },
+      "delta_vs_full_model": null,
+      "hypotheses": [
+        "H1d",
+        "H3e"
+      ],
+      "notes": "",
+      "run_id": "dinov2-pooled-576",
+      "score": null,
+      "status": "pending",
+      "title": "DINOv2 pooled to 576"
+    },
+    "full-model": {
+      "config_overrides": {},
+      "delta_vs_full_model": null,
+      "hypotheses": [],
+      "notes": "",
+      "run_id": "full-model",
+      "score": null,
+      "status": "pending",
+      "title": "Full model (all modules)"
+    },
+    "grpo-vs-fdpo-vs-sft": {
+      "config_overrides": {
+        "training.comparison_algorithms": [
+          "grpo",
+          "fdpo",
+          "sft"
+        ]
+      },
+      "delta_vs_full_model": null,
+      "hypotheses": [
+        "H5b"
+      ],
+      "notes": "",
+      "run_id": "grpo-vs-fdpo-vs-sft",
+      "score": null,
+      "status": "pending",
+      "title": "GRPO vs fDPO vs SFT-only"
+    },
+    "gt-depth-vs-depth-anything-v2": {
+      "config_overrides": {
+        "depth.source": "depth_anything_v2"
+      },
+      "delta_vs_full_model": null,
+      "hypotheses": [
+        "H2c"
+      ],
+      "notes": "",
+      "run_id": "gt-depth-vs-depth-anything-v2",
+      "score": null,
+      "status": "pending",
+      "title": "GT depth vs Depth Anything V2"
+    },
+    "mean-vs-15pct-aggregation": {
+      "config_overrides": {
+        "geometry.depth_aggregation": "mean"
+      },
+      "delta_vs_full_model": null,
+      "hypotheses": [
+        "H2e"
+      ],
+      "notes": "",
+      "run_id": "mean-vs-15pct-aggregation",
+      "score": null,
+      "status": "pending",
+      "title": "Mean vs 15th-pct aggregation"
+    },
+    "no-gatr": {
+      "config_overrides": {
+        "model.use_gatr": false
+      },
+      "delta_vs_full_model": null,
+      "hypotheses": [
+        "H2a"
+      ],
+      "notes": "",
+      "run_id": "no-gatr",
+      "score": null,
+      "status": "pending",
+      "title": "No GATr"
+    },
+    "no-gridcell-rope3d": {
+      "config_overrides": {
+        "model.use_gridcell_rope3d": false
+      },
+      "delta_vs_full_model": null,
+      "hypotheses": [
+        "H2b"
+      ],
+      "notes": "",
+      "run_id": "no-gridcell-rope3d",
+      "score": null,
+      "status": "pending",
+      "title": "No GridCellRoPE3D (standard M-RoPE)"
+    },
+    "no-rms-norm-matching": {
+      "config_overrides": {
+        "fusion.use_rms_norm_matching": false
+      },
+      "delta_vs_full_model": null,
+      "hypotheses": [
+        "H3b"
+      ],
+      "notes": "",
+      "run_id": "no-rms-norm-matching",
+      "score": null,
+      "status": "pending",
+      "title": "No RMS norm matching"
+    },
+    "no-typed-attn-bias": {
+      "config_overrides": {
+        "fusion.use_typed_attention_bias": false
+      },
+      "delta_vs_full_model": null,
+      "hypotheses": [
+        "H3d"
+      ],
+      "notes": "",
+      "run_id": "no-typed-attn-bias",
+      "score": null,
+      "status": "pending",
+      "title": "No typed attention bias"
+    },
+    "permutation-test": {
+      "config_overrides": {
+        "eval.run_permutation_test": true
+      },
+      "delta_vs_full_model": null,
+      "hypotheses": [
+        "H3c"
+      ],
+      "notes": "",
+      "run_id": "permutation-test",
+      "score": null,
+      "status": "pending",
+      "title": "Permutation test"
+    },
+    "scale-ratio-sweep": {
+      "config_overrides": {
+        "geometry.gridcell_scale_sweep": [
+          "phi",
+          "sqrt_e",
+          "pow2"
+        ]
+      },
+      "delta_vs_full_model": null,
+      "hypotheses": [
+        "H2d"
+      ],
+      "notes": "",
+      "run_id": "scale-ratio-sweep",
+      "score": null,
+      "status": "pending",
+      "title": "Scale ratio sweep (phi vs sqrt(e) vs pow2)"
+    },
+    "sft-only": {
+      "config_overrides": {
+        "training.rl.algorithm": "none"
+      },
+      "delta_vs_full_model": null,
+      "hypotheses": [
+        "H5a"
+      ],
+      "notes": "",
+      "run_id": "sft-only",
+      "score": null,
+      "status": "pending",
+      "title": "SFT only (no GRPO)"
+    },
+    "siglip-only": {
+      "config_overrides": {
+        "model.use_dinov2": false,
+        "model.use_gatr": false
+      },
+      "delta_vs_full_model": null,
+      "hypotheses": [
+        "H1a"
+      ],
+      "notes": "",
+      "run_id": "siglip-only",
+      "score": null,
+      "status": "pending",
+      "title": "SigLIP only"
+    }
+  }
+}
