@@ -56,14 +56,14 @@
 - [x] `src/spatialvlm/data/preprocessing.py` — image resize, depth normalization
 
 ## Phase 7: Training Pipeline
-- [ ] `src/spatialvlm/training/prealign.py` — Stage 1: projectors only (~77M), LLaVA-558K
-- [ ] `src/spatialvlm/training/sft.py` — Stage 2: full 584M trainable
-- [ ] `src/spatialvlm/training/grpo.py` — Stage 3: GRPO with curriculum
-- [ ] `src/spatialvlm/training/fdpo.py` — Stage 3 alt: fDPO comparison
-- [ ] `src/spatialvlm/training/curriculum.py` — staged reward weighting schedule
-- [ ] `configs/train_prealign.yaml`
-- [ ] `configs/train_sft.yaml`
-- [ ] `configs/train_grpo.yaml`
+- [x] `src/spatialvlm/training/prealign.py` — Stage 1: projectors only (~77M), LLaVA-558K
+- [x] `src/spatialvlm/training/sft.py` — Stage 2: full 584M trainable
+- [x] `src/spatialvlm/training/grpo.py` — Stage 3: GRPO with curriculum
+- [x] `src/spatialvlm/training/fdpo.py` — Stage 3 alt: fDPO comparison
+- [x] `src/spatialvlm/training/curriculum.py` — staged reward weighting schedule
+- [x] `configs/train_prealign.yaml`
+- [x] `configs/train_sft.yaml`
+- [x] `configs/train_grpo.yaml`
 
 ## Phase 8: Evaluation
 - [ ] `src/spatialvlm/eval/metrics.py` — SR, SPL, PSI, CMB
