@@ -1,0 +1,46 @@
+{
+  "checks": [
+    {
+      "name": "habitat",
+      "status": "fail",
+      "message": "Habitat import failed: No module named 'habitat'",
+      "details": {}
+    },
+    {
+      "name": "qwen3_vl",
+      "status": "ok",
+      "message": "Qwen3-VL config check succeeded.",
+      "details": {
+        "model_type": "qwen3_vl",
+        "hidden_size": 4096
+      }
+    },
+    {
+      "name": "dinov2",
+      "status": "ok",
+      "message": "DINOv2 config check succeeded.",
+      "details": {
+        "model_type": "dinov2",
+        "hidden_size": 1024
+      }
+    },
+    {
+      "name": "wandb",
+      "status": "ok",
+      "message": "wandb import succeeded.",
+      "details": {
+        "version": "0.20.1",
+        "api_key_present": true
+      }
+    },
+    {
+      "name": "gpu",
+      "status": "fail",
+      "message": "CUDA is not available.",
+      "details": {
+        "device_count": 0
+      }
+    }
+  ],
+  "all_ok": false
+}
