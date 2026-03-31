@@ -21,8 +21,8 @@
 - [x] `tests/test_gridcell_rope3d.py` — verify dims=64, isotropy, frequency spacing
 - [x] `src/spatialvlm/fusion/norm_matching.py` — RMS norm matching (zero params)
 - [x] `tests/test_norm_matching.py`
-- [ ] `src/spatialvlm/training/rewards.py` — R_format, R_progress, R_collision, R_goal, R_consistency
-- [ ] `tests/test_rewards.py`
+- [x] `src/spatialvlm/training/rewards.py` — R_format, R_progress, R_collision, R_goal, R_consistency
+- [x] `tests/test_rewards.py`
 
 ## Phase 2: Encoder Wrappers
 - [x] `src/spatialvlm/config/model.py` — EncoderConfig, GeometryConfig, FusionConfig, BackboneConfig, SpatialVLMConfig
