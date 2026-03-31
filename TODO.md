@@ -66,11 +66,11 @@
 - [x] `configs/train_grpo.yaml`
 
 ## Phase 8: Evaluation
-- [ ] `src/spatialvlm/eval/metrics.py` — SR, SPL, PSI, CMB
-- [ ] `src/spatialvlm/eval/permutation_test.py` — the smoking-gun diagnostic
-- [ ] `src/spatialvlm/eval/benchmarks.py` — What's Up, CV-Bench, VSI-Bench, VLN-CE, ObjectNav
-- [ ] `src/spatialvlm/eval/ablations.py` — ablation orchestrator (one-module-removed variants)
-- [ ] `configs/eval.yaml`
+- [x] `src/spatialvlm/eval/metrics.py` — SR, SPL, PSI, CMB
+- [x] `src/spatialvlm/eval/permutation_test.py` — the smoking-gun diagnostic
+- [x] `src/spatialvlm/eval/benchmarks.py` — What's Up, CV-Bench, VSI-Bench, VLN-CE, ObjectNav
+- [x] `src/spatialvlm/eval/ablations.py` — ablation orchestrator (one-module-removed variants)
+- [x] `configs/eval.yaml`
 
 ## Phase 9: Ablation Runs
 - [ ] Full model (all modules)
