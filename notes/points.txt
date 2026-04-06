@@ -13,5 +13,9 @@ Conisderation: Likely a good point to note and test. To see if LoRA actually wor
 
 ---
 
-3. 
+3. 96 layer custom RoPE. If implementing, you have to dig into qwen's repo for the rope code and change
+   the spatial representation from 64 heads to 96 instead. But we do have several challenges like:
+   - making flash attn work. 
+   - make distinction as expected, 0-31 for text and 32-127 for spatial (gridrope3d).
+   - etc.
 

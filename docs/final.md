@@ -573,3 +573,401 @@ src/spatialvlm/
 tests/  (26 files, 184 passing tests)
 configs/  (train.yaml, eval.yaml, model.yaml)
 ```
+
+---
+
+## 14. Benchmark Suite: What to Beat and Where
+
+Our system uses **Habitat GT depth exclusively**. This constrains the primary evaluation to benchmarks where ground-truth 3D structure is available — simulation-based navigation benchmarks and ScanNet-based 3D QA benchmarks. Real-image benchmarks (What's Up, CV-Bench) are supplementary only, as they cannot leverage our geometric branch without estimated depth.
+
+### 14.1 Primary Benchmarks (P0) — Must Beat SOTA
+
+These define the paper's headline results. All have GT depth available natively.
+
+#### VSI-Bench (Visual Spatial Intelligence Benchmark)
+- **Venue**: CVPR 2025 (NYU — "Thinking in Space")
+- **Tests**: 8 spatial subtasks — object counting, relative direction, absolute distance estimation, route planning, object size, room size, relative distance, appearance order
+- **Data**: 5,000+ QA pairs from ARKitScenes, ScanNet, ScanNet++ (all have GT depth and 3D reconstructions)
+- **Metrics**: Accuracy (numerical estimation + multiple choice), broken down by subtask
+- **GT depth**: Yes — all underlying scenes are 3D-scanned environments
+- **Current SOTA**:
+
+| Model | Accuracy | Notes |
+|-------|----------|-------|
+| SpaceMind (Dec 2025) | **69.6%** | Camera-guided fusion, InternVL3-8B |
+| VLM-3R-7B | 60.9% | 3D reconstruction tokens from monocular video |
+| Spatial-MLLM-4B (NeurIPS 2025) | 48.4% | Dual encoder (2D + 3D geometry) |
+| Gemini 1.5 Pro | 48.8% | Proprietary |
+| GPT-4o | ~35-40% | Proprietary |
+| Human | **79.0%** | — |
+
+- **Why P0**: Largest gap between VLMs and humans (~40 points). Distance estimation and room layout subtasks are near-random for all VLMs. Our architecture (GATr geometric branch + GridCellRoPE3D) is specifically designed to solve these metric spatial tasks. **Beating SpaceMind's 69.6% or closing the gap to human 79% would be the paper's strongest result.**
+
+#### SQA3D (Situated Question Answering in 3D Scenes)
+- **Venue**: ICLR 2023
+- **Tests**: Situated spatial QA — questions about spatial relations, distances, object properties, all grounded in the agent's position and orientation within a 3D ScanNet scene
+- **Data**: 33.4K questions, 6.8K situations, 650+ ScanNet scenes, 20.4K descriptions
+- **Metrics**: Exact Match (EM@1), broken down by question type (what, where, how many, spatial relation)
+- **GT depth**: Yes — ScanNet provides full 3D reconstructions; depth renderable from any viewpoint at 518x518
+- **Current SOTA**:
+
+| Model | EM@1 | Notes |
+|-------|------|-------|
+| SpaceMind (Dec 2025) | **~55%** | Claims SOTA on EM@1 and EM@R1 |
+| GPS4Scene / 3D-aware VLMs | 55-65% | Scene-graph + LLM approaches |
+| LEO (NeurIPS 2023) | ~50% | 3D embodied generalist |
+| 3D-LLM | ~47% | Point cloud + LLM |
+| GPT-4V (zero-shot) | ~45-50% | No 3D input |
+| Human | **90.06%** | — |
+
+- **Why P0**: The gold-standard 3D spatial QA benchmark. Published at ICLR, well-established leaderboard. Directly tests whether the model understands "where am I, what's around me, how far is X." Our GATr branch + situated position encoding should dramatically help on spatial relation questions.
+
+#### VLN-CE R2R val-unseen (Vision-Language Navigation — Continuous Environments)
+- **Venue**: ECCV 2020 (Krantz et al.), community standard since
+- **Tests**: Following natural language navigation instructions ("Walk past the table and turn right at the hallway...") in continuous Habitat/Matterport3D environments with low-level actions
+- **Data**: ~2K val-unseen episodes, ~4K train episodes, 90 Matterport3D environments
+- **Metrics**: Success Rate (SR), SPL (Success weighted by Path Length), nDTW, SDTW
+- **GT depth**: Yes — Habitat simulator provides perfect depth at any resolution
+- **Current SOTA**:
+
+| Model | SR | SPL | Notes |
+|-------|-----|-----|-------|
+| V2-VLNCE (RA-L 2026) | **~72%** | — | +8-15% over Efficient-VLN |
+| Efficient-VLN (2024) | 64.2% | — | Previous SOTA |
+| NavFoM | 64.9% | — | Cross-embodiment foundation model |
+| BEVBert / ETPNav | ~60% | ~50% | BEV representations |
+| NaVILA (NeurIPS 2025) | 47%+ | — | VLM-based agent |
+
+- **Why P0**: The community-standard navigation benchmark. Every VLN paper reports R2R numbers. The field has progressed from ~40% to ~72% SR — we need to be competitive with V2-VLNCE or show that our spatial understanding transfers to better path quality (SPL).
+
+#### ObjectNav HM3D
+- **Venue**: Habitat Challenge series (NeurIPS), HM3D (Ramakrishnan et al., NeurIPS 2021)
+- **Tests**: Navigate to a specified object category ("find a chair") in previously unseen HM3D environments via exploration
+- **Data**: 2K+ val episodes, 6 standard categories (expandable to 20+)
+- **Metrics**: Success Rate (SR), SPL, SoftSPL
+- **GT depth**: Yes — Habitat on HM3D meshes
+- **Current SOTA**:
+
+| Model | SR | SPL | Notes |
+|-------|-----|-----|-------|
+| CogNav (ICCV 2025) | **72.5%** | — | LLM cognitive process modeling |
+| PixNav / PIRLNav | ~65% | — | End-to-end pixel navigation |
+| VLFM (NeurIPS 2023) | ~55% | — | Vision-language frontier maps |
+| ESC / L3MVN / CoW | 40-60% | — | LLM-based planners |
+
+- **Why P0**: Tests exploration + semantic + spatial reasoning. CogNav's 72.5% is a high bar. Our geometric branch (GATr understanding scene layout) should help with efficient exploration — knowing where objects are likely to be based on room geometry.
+
+### 14.2 Strong Secondary Benchmarks (P1) — Expected to Report
+
+These strengthen the paper's claims and test different spatial abilities.
+
+#### VLN-CE RxR val-unseen
+- **Venue**: ACL 2020 (Ku et al.), CE variant in Habitat
+- **Tests**: Same as R2R but with longer, more detailed multilingual instructions; paths are longer and more complex
+- **Data**: ~4K val-unseen (English subset), ~126K instructions total (English, Hindi, Telugu)
+- **Metrics**: SR, SPL, nDTW
+- **GT depth**: Yes (Habitat)
+- **Current SOTA**: SR generally 5-15 points below R2R; BEVBert-style models at 40-50% SR. V2-VLNCE likely ~60%+.
+- **Why P1**: Harder variant of R2R. Longer trajectories stress spatial memory — our GridCellRoPE3D should help maintain 3D consistency across many steps.
+
+#### Spartun3D
+- **Venue**: ICLR 2025
+- **Tests**: Situated captioning and QA requiring reasoning about surrounding objects relative to agent's standing point and orientation in 3D ScanNet scenes
+- **Data**: ~133K examples
+- **Metrics**: QA accuracy, captioning quality
+- **GT depth**: Yes — built on ScanNet 3D scenes with situated agent positions
+- **Why P1**: Directly tests situated spatial reasoning with agent orientation. Complements SQA3D. Our position routing (GridCellRoPE3D encodes agent's 3D viewpoint) is built for this.
+
+#### ScanQA
+- **Venue**: CVPR 2022
+- **Tests**: Free-form 3D QA about spatial scenes requiring understanding of object layouts and relations
+- **Data**: ~41K QA pairs across 800 ScanNet scenes
+- **Metrics**: CIDEr, BLEU-4, METEOR, ROUGE-L
+- **GT depth**: Yes (ScanNet reconstructions)
+- **Current SOTA**: CIDEr ~72 (Gen3DQA); Video-3D LLM also claims SOTA
+- **Why P1**: Open-ended generation rather than multiple-choice. Tests whether our spatial understanding transfers to fluent spatial descriptions.
+
+#### ScanRefer
+- **Venue**: ECCV 2020
+- **Tests**: 3D object grounding — given a natural language description, localize the referred object in a ScanNet scene
+- **Data**: ~36K descriptions for ~7K objects in 703 ScanNet scenes
+- **Metrics**: Acc@0.25, Acc@0.5 (IoU thresholds)
+- **GT depth**: Yes (full 3D point clouds)
+- **Current SOTA**: 55-65% Acc@0.5 (3D-VisTA, EDA); newer methods pushing toward 70%
+- **Why P1**: Tests whether GATr geometric features help with precise 3D localization. Our equivariant representations should encode object positions more accurately than appearance-only features.
+
+#### REVERIE
+- **Venue**: CVPR 2020
+- **Tests**: Navigation + remote object grounding ("Go to the bedroom and bring me the pillow on the bed")
+- **Data**: ~3.5K val-unseen episodes in Matterport3D
+- **Metrics**: SR, SPL, RGS (Remote Grounding Success), RGSPL
+- **GT depth**: Yes (Habitat/Matterport3D)
+- **Current SOTA**: Mid-30s to low-40s SR
+- **Why P1**: Combines navigation and grounding. Tests end-to-end spatial understanding — navigate there AND identify the right object.
+
+### 14.3 Diagnostic and Meta-Benchmarks (P2) — Ablation Support
+
+These provide fine-grained analysis of which spatial abilities improve.
+
+#### SITE (Spatial Intelligence Thorough Evaluation)
+- **Venue**: ICCV 2025 (Boston Univ + Microsoft Research)
+- **Tests**: 30+ datasets unified; covers figural-to-environmental scales, spatial visualization, spatial orientation, intrinsic/extrinsic reference frames, static/dynamic
+- **Data**: 8,068 tasks aggregated from 31 datasets
+- **Metrics**: Accuracy across multi-choice VQA per spatial cognition dimension
+- **GT depth**: Mixed — aggregates from 31 datasets, some include ScanNet/indoor
+- **Why P2**: Meta-benchmark showing *breadth* of spatial improvement across cognitive dimensions. Strong evidence that our architecture doesn't just help on one narrow task.
+
+#### 3DSRBench (3D Spatial Reasoning Benchmark)
+- **Venue**: ICCV 2025
+- **Tests**: Height, location, orientation, multi-object reasoning across 12 question types, including uncommon 6D viewpoints
+- **Data**: 2,772 manually annotated VQA pairs; includes HSSD (Habitat Synthetic Scenes Dataset) subset
+- **Metrics**: Accuracy per question type
+- **GT depth**: Yes for HSSD subset (Habitat-compatible)
+- **Why P2**: The HSSD subset runs directly in Habitat with GT depth. Tests 3D awareness from unusual viewpoints — where our equivariant GATr representations should shine.
+
+#### NavTrust
+- **Venue**: arXiv March 2026
+- **Tests**: Robustness of navigation agents under RGB/depth corruptions (motion blur, depth noise, missing data) and instruction perturbations
+- **Data**: Systematic corruption applied to VLN-CE and ObjectNav episodes
+- **Metrics**: SR degradation under each corruption type
+- **GT depth**: Yes (Habitat-based)
+- **Why P2**: Tests robustness, not just peak performance. Our explicit geometric processing should be more robust to visual corruptions than appearance-only models (GATr operates on depth geometry, not pixels).
+
+#### SpatialRGPT-Bench
+- **Venue**: NeurIPS 2024
+- **Tests**: Region-grounded spatial cognition — distance estimation, size comparison, relative depth, spatial relation classification
+- **Data**: Subsets from SUNRGBD and Hypersim (both have GT depth)
+- **Metrics**: Accuracy on spatial relation classification
+- **GT depth**: Yes for SUNRGBD/Hypersim subsets
+- **Current SOTA**: SpatialRGPT >20% accuracy gain over GPT-4V; SpatialReasoner-R1 adds +9.8% via fDPO
+- **Why P2**: Our fDPO implementation with segment-specific betas follows SpatialReasoner-R1's exact approach — this benchmark directly validates H5b.
+
+#### RoboSpatial
+- **Venue**: CVPR 2025 (NVIDIA, Oral)
+- **Tests**: Ego-centric, world-centric, and object-centric spatial relationships; affordance prediction
+- **Data**: 1M images, 5K 3D scans, 3M annotated spatial relationships (indoor)
+- **Metrics**: Accuracy on spatial relationship prediction
+- **GT depth**: Yes — real indoor 3D scans + egocentric images with GT annotations
+- **Why P2**: Adopted by Qwen3-VL (our backbone) as a benchmark. Showing improvement over the backbone's own spatial scores is a clean demonstration of our architectural additions.
+
+#### EXPRESS-Bench (Exploration-Aware EQA)
+- **Venue**: ICCV 2025
+- **Tests**: Whether agents explore correctly before answering spatial questions — measures exploration-answer consistency
+- **Data**: 777 trajectories, 2,044 QA pairs in Habitat
+- **Metrics**: EAC (Exploration-Answer Consistency)
+- **GT depth**: Yes (Habitat-based)
+- **Why P2**: Tests a combined exploration + reasoning skill. Our architecture's explicit 3D scene understanding should produce more purposeful exploration.
+
+### 14.4 Supplementary Benchmarks (P3) — Nice-to-Have
+
+These use real images (no GT depth). Include only if we extend to Depth Anything V2 (ablation H2c).
+
+| Benchmark | Venue | Tests | SOTA | Notes |
+|-----------|-------|-------|------|-------|
+| MultihopSpatial | arXiv Mar 2026 | 1-3 hop compositional spatial reasoning | GPT-5.2: 9.4% on 3-hop grounded | Real images; extremely hard |
+| What's Up | EMNLP 2023 | Basic spatial relations (up/down/left/right) | All VLMs ~56% (chance) | Real images; smoking gun |
+| CV-Bench (spatial) | 2024 | Depth ordering, distance comparison | GPT-4V ~65-70% | Real images |
+| SpatialBench (cognitive) | arXiv 2025 | 15 tasks across 5 cognitive levels | Models fail at symbolic reasoning | Mixed sources |
+| ViewSpatial-Bench | arXiv May 2025 | Multi-perspective spatial localization | — | ScanNet subset usable |
+
+### 14.5 The Competitive Landscape: What We Must Beat
+
+The table below summarizes the models we're competing against, organized by approach:
+
+| Model | Approach | VSI-Bench | SQA3D | VLN-CE R2R SR | ObjectNav SR |
+|-------|----------|-----------|-------|---------------|--------------|
+| **SpaceMind** (Dec 2025) | Camera-guided cross-attn fusion | **69.6%** | SOTA | — | — |
+| **VLM-3R** (CVPR 2026) | 3D reconstruction tokens | 60.9% | — | — | — |
+| **CogNav** (ICCV 2025) | LLM cognitive process model | — | — | — | **72.5%** |
+| **V2-VLNCE** (RA-L 2026) | Improved VLN with views | — | — | **~72%** | — |
+| **Spatial-MLLM** (NeurIPS 2025) | Dual encoder (2D + 3D) | 48.4% | — | — | — |
+| **SpatialLadder** (ICLR 2026) | GRPO + curriculum training | — | — | — | — |
+| **SpatialReasoner-R1** (NeurIPS 2025) | fDPO with segment betas | — | — | — | — |
+| **NaVILA** (NeurIPS 2025) | VLM navigation agent | — | — | 47%+ | — |
+| Efficient-VLN (2024) | Efficient VLN | — | — | 64.2% | — |
+| Human | — | 79.0% | 90.06% | — | — |
+
+**Key insight**: No single model dominates across all benchmarks. SpaceMind leads VSI-Bench, CogNav leads ObjectNav, V2-VLNCE leads VLN-CE. Our architecture's advantage is the **unified geometric backbone** — we compete on ALL spatial tasks with one architecture, while existing SOTA models are specialized per-benchmark.
+
+### 14.6 Where We Should Win and Why
+
+| Benchmark | Our Advantage | Key Module |
+|-----------|---------------|------------|
+| **VSI-Bench distance/size estimation** | GATr encodes metric 3D geometry; GridCellRoPE3D encodes physical distances | Stage 2 |
+| **SQA3D spatial relations** | Situated position encoding via GridCellRoPE3D; GATr understands relative positions | Stage 2 + 4 |
+| **VLN-CE R2R/RxR** | 3D-aware attention (nearby obstacles get more weight); norm-balanced fusion prevents token drowning | Stage 2 + 3 |
+| **ObjectNav HM3D** | Geometric scene understanding for efficient exploration; GATr encodes room layout | Stage 2 |
+| **Spartun3D / ScanRefer** | Equivariant GATr representations for precise 3D localization | Stage 2 |
+| **Permutation test (all benchmarks)** | >15% drop (ours) vs. <3% (baselines) — proves spatial structure is used | Stage 3 (H3c) |
+
+### 14.7 Recommended Evaluation Protocol
+
+**Phase 1 — Core Results Table** (required for submission):
+1. VSI-Bench (8 subtasks) — headline spatial intelligence result
+2. SQA3D (by question type) — headline 3D QA result
+3. VLN-CE R2R val-unseen (SR, SPL) — headline navigation result
+4. ObjectNav HM3D (SR, SPL) — headline exploration result
+5. Permutation test across all 4 — the smoking gun
+
+**Phase 2 — Extended Results** (strengthens the paper):
+6. VLN-CE RxR val-unseen
+7. Spartun3D
+8. ScanQA
+9. ScanRefer (Acc@0.5)
+10. REVERIE (SR, RGS)
+
+**Phase 3 — Diagnostic Analysis** (ablation support):
+11. SITE meta-benchmark (spatial cognition dimensions)
+12. 3DSRBench HSSD subset (uncommon viewpoints)
+13. NavTrust (robustness under corruption)
+14. SpatialRGPT-Bench Hypersim subset (metric spatial tasks)
+15. RoboSpatial (Qwen3-VL's own benchmark)
+16. EXPRESS-Bench (exploration-answer consistency)
+
+**Phase 4 — Supplementary** (if time permits, requires Depth Anything V2):
+17. MultihopSpatial (compositional reasoning)
+18. What's Up (basic spatial relations)
+19. CV-Bench spatial subset
+
+---
+
+## 15. Gap Analysis: What the Literature Reveals We Must Address
+
+Based on Liu et al. (2025), "Spatial Intelligence in Vision-Language Models: A Comprehensive Survey" (TechRxiv, 47 pages, 37 models evaluated across 9 benchmarks), the following gaps and risks are identified for our architecture.
+
+### 15.1 Critical Warning: Generalization of 3D-Enhanced Models
+
+**Key Finding 5 from the survey**: *"Explicit 2D/3D spatial enhancements demonstrate limited generalization, with general-purpose models often outperforming specialized variants."*
+
+The survey found that models injecting explicit 3D information (our category) **underperform general-purpose VLMs** in broad evaluations:
+
+| Method Category | Perception | Understanding | Extrapolation | All-Three |
+|----------------|------------|---------------|---------------|-----------|
+| General VLM | 42.6% | 58.9% | 31.6% | 47.0% |
+| §5.4 3D info | 37.3% | 51.8% | 23.9% | 34.6% |
+| §5.2 Model-centric | 45.1% | 59.0% | 31.7% | 43.7% |
+
+3D-enhanced models score **12.4 points below** general VLMs on the All-Three composite. This is the single biggest risk to our paper. The survey attributes this to: (a) overfitting to narrow spatial tasks at the cost of general spatial reasoning, (b) degraded performance on non-metric spatial tasks (relative relations, scene understanding).
+
+**Mitigation in our design**:
+- We freeze the Qwen3-VL backbone and inject via zero-init gated cross-attention — the model starts as a general VLM and gradually incorporates 3D signal. This preserves general capabilities.
+- Our SVA fusion aggregates 3D alongside semantic (SigLIP) and structural (DINOv2) features, not replacing them.
+- Our ablation design explicitly tests whether spatial improvement comes at a generalization cost.
+
+**Action required**: We must evaluate on **broad spatial benchmarks** (not just navigation/3D QA) to demonstrate we don't suffer this generalization failure. The survey's 9-benchmark suite should be a secondary evaluation.
+
+### 15.2 Cognitive Hierarchy: We Under-Test Extrapolation
+
+The survey defines three cognitive levels:
+1. **Perception**: Object attributes, depth estimation, orientation → Our GATr handles this
+2. **Understanding**: Spatial relations, grounding → Our SVA + GridCellRoPE3D handles this
+3. **Extrapolation**: Mental rotation, occlusion reasoning, spatial planning → **Largely untested in our benchmark suite**
+
+**Key Finding 1**: VLMs perform Understanding > Perception > Extrapolation. The hardest tasks (extrapolation) include:
+- **Mental rotation** (MINDCUBE): Even GPT-5 scores only 42.96%
+- **Spatial simulation** (SRBench): GPT-5 scores 56.20%, open models ~28-33%
+- **Occlusion reasoning**: Inferring objects behind occluders
+
+Our architecture has no explicit mechanism for extrapolation-level tasks. GridCellRoPE3D encodes spatial positions but doesn't model mental transformations. GATr is equivariant (handles rotations of the observed scene) but not predictive (doesn't simulate unobserved states).
+
+**Benchmarks to add**:
+- **MINDCUBE** (Yin et al., 2025) — mental rotation of 3D polycubes; tests whether 3D awareness helps with spatial visualization. SOTA: GPT-5 at 42.96%.
+- **SRBench** (spatial reasoning beyond visible) — occlusion, spatial simulation. SOTA: GPT-5 at 56.20%.
+
+### 15.3 Missing Benchmarks from the Survey's Evaluation Suite
+
+The survey evaluates 37 models on 9 benchmarks. We should include several of these to enable direct comparison:
+
+| Benchmark | Cognitive Level | Our Coverage | Priority |
+|-----------|----------------|--------------|----------|
+| **EgoOrientBench** | Perception | MISSING | Should add — tests orientation estimation from egocentric views, directly relevant to navigation |
+| **GeoMeter** | Perception | MISSING | Should add — geometric reasoning (angles, lengths, areas) from real-world images |
+| **SEED-Bench (spatial)** | Understanding | MISSING | Should add — widely used, enables cross-study comparison |
+| **What's Up** | Understanding | In P3 (supplementary) | Promote to P2 — the survey shows Qwen2.5-VL-7B scores 50.92% (near-chance) while GPT-5 scores 99.63% |
+| **SRBench** | Extrapolation | MISSING | Should add — tests spatial reasoning beyond the visible |
+| **MINDCUBE** | Extrapolation | MISSING | Should add — 3D mental rotation |
+| **OmniSpatial** | All Three | MISSING | Should add — comprehensive spatial evaluation |
+| **RealWorldQA** | All Three | MISSING | Lower priority — real images only |
+
+### 15.4 Updated What's Up Assessment
+
+Our `plan.md` states: *"All VLMs ~56% (near-chance). Humans 99%."*
+
+**This is outdated.** The survey's Table 1 shows:
+
+| Model | What's Up Score |
+|-------|----------------|
+| GPT-5 | **99.63%** |
+| GPT-4o | **99.50%** |
+| Gemini 2.5 Pro | **99.63%** |
+| Qwen2.5-VL-72B | 96.72% |
+| LLaVA-NeXT-7B | 78.17% |
+| **Qwen2.5-VL-7B** | **50.92%** |
+| LLaVA-v1.5-7B | 19.02% |
+
+Commercial models have essentially solved What's Up. The near-chance finding applies primarily to older/smaller open-source models. Qwen2.5-VL-7B (similar scale to our Qwen3-VL-8B backbone) still scores near-chance at 50.92%.
+
+**Implication**: What's Up is no longer the smoking gun it was in 2023. However, **for 7-8B scale open-source models**, it's still very relevant. Our paper should frame the What's Up test as: "At the 8B scale, spatial structure remains destroyed — our architecture recovers it."
+
+### 15.5 The Referential Ambiguity Problem
+
+**Survey Challenge #3**: Spatial language is inherently ambiguous between egocentric (viewer-centered) and allocentric (object-centered) perspectives. "The cat is to the left of the dog" depends on whether you mean viewer-left or dog-left.
+
+Our architecture encodes positions in camera coordinates (egocentric) via backprojection. We don't explicitly model allocentric reference frames. This is fine for navigation (egocentric is natural) but may cause failures on:
+- Perspective-taking tasks (SQA3D "situated" questions)
+- Multi-agent spatial reasoning
+- Instructions given from a third-person viewpoint
+
+**Mitigation**: Our GridCellRoPE3D uses tetrahedral directions (rotationally symmetric), so the encoding doesn't privilege any particular viewpoint orientation. However, the backprojection is always in camera frame. For allocentric tasks, the model must learn the frame transformation through LoRA + GRPO, which is possible but not guaranteed.
+
+### 15.6 Training Data Considerations from the Survey
+
+The survey identifies 21 spatially-oriented training datasets. Notable ones we should consider:
+
+| Dataset | Scale | Type | Relevance |
+|---------|-------|------|-----------|
+| **SpatialVLM-data** (Chen et al., CVPR 2024) | 2M | Spatial QA from internet images + depth | Pre-alignment data |
+| **SpatialReasoner-data** | 50K | Spatial reasoning with grounding | GRPO training data |
+| **Sparkle** (2025) | Synthetic | Direction, localization, distance QA | Curriculum stage 1 data |
+| **Open3DVQA** | Simulator-based | Urban 3D QA | Could adapt to indoor |
+
+Our current training data plan (LLaVA-558K pre-alignment, R2R/RxR/SQA3D SFT, Habitat rollouts GRPO) may benefit from supplementing with dedicated spatial reasoning training data during SFT.
+
+### 15.7 Benchmark Design Bias Warning
+
+**Key Finding 2**: *"Current spatial reasoning benchmarks disproportionately emphasize vision-based relational tasks while underrepresenting metric and object-centric reasoning."*
+
+Our architecture is specifically strong on **metric reasoning** (distances, sizes via GATr) which is exactly what current benchmarks underrepresent. This means:
+- Standard benchmarks may not fully reveal our architecture's advantages
+- We should prioritize benchmarks that test metric spatial reasoning (VSI-Bench distance subtask, SpatialRGPT-Bench, GeoMeter)
+- We should report subtask-level breakdowns, not just aggregate scores
+
+### 15.8 Competitive Models We Weren't Tracking
+
+The survey reveals several models with approaches similar to ours:
+
+| Model | Approach | Similarity to Ours |
+|-------|----------|-------------------|
+| **SD-VLM** (2025) | Depth Positional Encoding — encodes depth maps into depth-aware position embeddings, fused via element-wise addition | Closest analog to GridCellRoPE3D; direct comparison needed |
+| **VCoder** (2024) | Versatile vision encoder with depth as additional input | Similar dual-encoder concept |
+| **SpatialBot** (2024) | Customized depth module alongside frozen visual backbone | Similar to our GATr branch |
+| **LLaVA-3D** (2024) | Empowering LMMs with 3D-awareness via 3D patch features | 3D-aware VLM at similar scale |
+| **SSR** (2025) | Intermediate latent rationale tokens from depth maps guide generation | Similar depth-guided reasoning |
+| **Cambrian-1** (2024) | SVA connector — our SVA is directly based on this | We must cite and compare |
+| **VLM-3R** (CVPR 2026) | Multi-view → 3D reconstruction tokens | Strong VSI-Bench competitor |
+| **Spatial-MLLM** (NeurIPS 2025) | Dual encoder (2D + 3D geometry) via CUT3R/VGGT | Almost identical dual-encoder strategy |
+
+**Spatial-MLLM is our closest competitor** — it uses a 2D encoder + 3D spatial encoder with a 2D-3D fusion module, exactly our SigLIP + GATr + SVA pattern. Key differences: they use CUT3R/VGGT for 3D (from multi-view), we use GATr on GT depth. They report 48.4% on VSI-Bench.
+
+### 15.9 Summary: Required Changes
+
+| # | Action | Priority | Impact |
+|---|--------|----------|--------|
+| 1 | Add generalization safeguards: evaluate on survey's 9-benchmark suite to prove no degradation | **CRITICAL** | Addresses Key Finding 5 |
+| 2 | Add MINDCUBE + SRBench to benchmark suite (extrapolation level) | HIGH | Addresses cognitive hierarchy gap |
+| 3 | Add EgoOrientBench + OmniSpatial + SEED-Bench spatial to benchmark suite | HIGH | Enables cross-study comparison |
+| 4 | Update What's Up framing in paper narrative (not universal near-chance anymore) | MEDIUM | Factual accuracy |
+| 5 | Compare against SD-VLM, Spatial-MLLM, VLM-3R as key baselines | HIGH | Competitive positioning |
+| 6 | Report subtask-level breakdowns on VSI-Bench and SQA3D | MEDIUM | Shows metric reasoning advantage |
+| 7 | Consider supplementing SFT data with dedicated spatial reasoning data | MEDIUM | Addresses training data gap |
+| 8 | Acknowledge allocentric limitation in paper's "Limitations" section | LOW | Intellectual honesty |
