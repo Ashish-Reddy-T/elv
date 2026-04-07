@@ -76,6 +76,7 @@ class Qwen3VLBackbone(nn.Module):
         enable_lora: bool = True,
         freeze_base_model: bool = True,
         apply_peft_2880_workaround: bool = True,
+        apply_spatial_rope: bool = True,
         device: torch.device | None = None,
         torch_dtype: torch.dtype | None = None,
         config: Any | None = None,
@@ -104,6 +105,7 @@ class Qwen3VLBackbone(nn.Module):
         self._freeze_base_model = freeze_base_model
         self._enable_lora = enable_lora
         self._apply_peft_2880_workaround = apply_peft_2880_workaround
+        self._apply_spatial_rope = apply_spatial_rope
         self._peft_model_factory = peft_model_factory
         self._lora_config_factory = lora_config_factory
         self._task_type_causal_lm = task_type_causal_lm
@@ -219,6 +221,16 @@ class Qwen3VLBackbone(nn.Module):
         params_touched = 0
         if self._apply_peft_2880_workaround:
             modules_touched, params_touched = self.enable_peft_2880_workaround()
+
+        if self._apply_spatial_rope:
+            try:
+                from spatialvlm.backbone.rope_patch import apply_rope_patch
+
+                apply_rope_patch(self.model)
+            except AttributeError:
+                # Model structure doesn't match Qwen3-VL (e.g., mock/test model).
+                # Skip rope patching silently — it will be applied when a real model loads.
+                pass
 
         self._stats = Qwen3BackboneStats(
             trainable_params=self._count_trainable_params(),

@@ -124,7 +124,13 @@ def pool_positions_to_sva_grid(
     target_h: int = 24,
     target_w: int = 24,
 ) -> torch.Tensor:
-    """Pool 3D positions from the DINOv2 patch grid to the SVA query grid.
+    """DEPRECATED: No longer needed — SVA now uses 1369 DINOv2-based queries.
+
+    With the icosahedral redesign, 1369 backprojected positions map 1:1 to
+    1369 SVA queries. No spatial pooling is required. This function is kept
+    for backward compatibility and ablation testing (H1d: 1369 vs 576 queries).
+
+    Pool 3D positions from the DINOv2 patch grid to the SVA query grid.
 
     Each SVA query at grid cell (i, j) corresponds to a spatial sub-region of
     the source (DINOv2/GATr) grid.  The 3D position assigned to that query is

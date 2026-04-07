@@ -1,5 +1,6 @@
 """Unit tests for depth backprojection and patch-level aggregation."""
 
+import pytest
 import torch
 
 from spatialvlm.geometry.backproject import (
@@ -139,8 +140,13 @@ class TestAggregatePatchesPercentile:
         )
 
 
+@pytest.mark.skip(reason="pool_positions_to_sva_grid deprecated — 1369 queries map 1:1")
 class TestPoolPositionsToSVAGrid:
-    """Tests for SVA-aligned position pooling (37×37 → 24×24)."""
+    """DEPRECATED: Tests for SVA-aligned position pooling (37x37 -> 24x24).
+
+    With 1369 DINOv2-based SVA queries, position pooling is no longer needed.
+    Kept for ablation testing (H1d: 1369 vs 576 queries).
+    """
 
     def test_output_shape_default(self):
         """Standard case: 1369 DINOv2 positions → 576 SVA positions."""

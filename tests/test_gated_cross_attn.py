@@ -1,6 +1,13 @@
-"""Tests for Flamingo-style gated cross-attention block with GQA."""
+"""DEPRECATED: Tests for Flamingo-style gated cross-attention block with GQA.
 
+Gated cross-attention was replaced by Qwen3-VL's native DeepStack (2026-04-05).
+These tests are kept for ablation reference but skipped in the main test suite.
+"""
+
+import pytest
 import torch
+
+pytestmark = pytest.mark.skip(reason="Gated cross-attention deprecated — replaced by DeepStack")
 
 from spatialvlm.fusion.gated_cross_attn import GatedCrossAttentionBlock
 

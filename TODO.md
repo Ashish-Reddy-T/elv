@@ -17,8 +17,8 @@
 - [x] `tests/test_camera.py`
 - [x] `src/spatialvlm/geometry/backproject.py` — depth→3D with 15th-percentile aggregation
 - [x] `tests/test_backproject.py` — verify shapes, edge cases (zero depth, NaN)
-- [x] `src/spatialvlm/geometry/gridcell_rope3d.py` — tetrahedral Fourier basis RoPE
-- [x] `tests/test_gridcell_rope3d.py` — verify dims=64, isotropy, frequency spacing
+- [x] `src/spatialvlm/geometry/gridcell_rope3d.py` — IcosahedralRoPE3D (6 icosahedral dirs, e^(1/3))
+- [x] `tests/test_gridcell_rope3d.py` — verify dims=96, isotropy (2*I_3), e^(1/3) spacing
 - [x] `src/spatialvlm/fusion/norm_matching.py` — RMS norm matching (zero params)
 - [x] `tests/test_norm_matching.py`
 - [x] `src/spatialvlm/training/rewards.py` — R_format, R_progress, R_collision, R_goal, R_consistency
@@ -38,16 +38,18 @@
 - [x] Verify improved PGA (join bilinear layers) is used, NOT basic PGA
 
 ## Phase 4: Fusion Modules
-- [x] `src/spatialvlm/fusion/sva.py` — SVA: 576 queries, 3314 KV, 2 cross-attn layers
-- [x] `tests/test_sva.py` — shape checks, typed attention bias (3x3 matrix)
-- [x] `src/spatialvlm/fusion/gated_cross_attn.py` — tanh(alpha) gating, zero-init
-- [x] `tests/test_gated_cross_attn.py` — verify gate=0 at init (pure passthrough)
+- [x] `src/spatialvlm/fusion/sva.py` — SVA: 1369 queries (DINOv2 base), 3314 KV, 2 layers
+- [x] `tests/test_sva.py` — shape checks, typed attention bias (3x3 matrix), DINOv2 query base
+- [x] `src/spatialvlm/fusion/gated_cross_attn.py` — DEPRECATED (replaced by DeepStack)
+- [x] `tests/test_gated_cross_attn.py` — DEPRECATED (skipped, kept for ablation reference)
 
 ## Phase 5: Backbone Integration
 - [x] `src/spatialvlm/backbone/qwen3_vl.py` — Qwen3-VL-8B wrapper + LoRA setup
-- [x] `src/spatialvlm/backbone/position_routing.py` — M-RoPE vs GridCellRoPE3D dispatch
+- [x] `src/spatialvlm/backbone/position_routing.py` — DEPRECATED (replaced by rope_patch.py)
+- [x] `src/spatialvlm/backbone/rope_patch.py` — RoPE monkey-patch (icosahedral injection)
+- [x] `tests/test_rope_patch.py` — cos/sin shapes, identity padding, singleton, config alignment
 - [x] `tests/test_qwen3_vl.py` — config introspection, LoRA path, PEFT #2880 workaround
-- [x] `tests/test_position_routing.py`
+- [x] `tests/test_position_routing.py` — DEPRECATED (skipped, kept for ablation reference)
 - [x] Verify PEFT bug #2880 workaround (manual requires_grad=True on ViT QKV)
 
 ## Phase 6: Data Pipeline
@@ -57,7 +59,7 @@
 
 ## Phase 7: Training Pipeline
 - [x] `src/spatialvlm/training/prealign.py` — Stage 1: projectors only (~77M), LLaVA-558K
-- [x] `src/spatialvlm/training/sft.py` — Stage 2: full 584M trainable
+- [x] `src/spatialvlm/training/sft.py` — Stage 2: ~206M trainable
 - [x] `src/spatialvlm/training/grpo.py` — Stage 3: GRPO with curriculum
 - [x] `src/spatialvlm/training/fdpo.py` — Stage 3 alt: fDPO comparison
 - [x] `src/spatialvlm/training/curriculum.py` — staged reward weighting schedule
@@ -75,19 +77,20 @@
 ## Phase 9: Ablation Runs
 - [x] `scripts/run_phase9_ablations.py` — run matrix artifact + coverage validation
 - [ ] Full model (all modules)
-- [ ] No GridCellRoPE3D (standard M-RoPE) [H2b]
+- [ ] No IcosahedralRoPE3D (standard M-RoPE) [H2b]
 - [ ] No GATr [H2a]
 - [ ] SigLIP only [H1a]
 - [ ] DINOv2 only [H1a]
 - [ ] DINOv2 pooled to 576 [H1d, H3e]
-- [ ] Concatenation fusion (no SVA/cross-attn) [H3a]
+- [ ] Icosahedral vs tetrahedral directions [H2f]
+- [ ] Concatenation fusion (no SVA/cross-attn)
 - [ ] No RMS norm matching [H3b]
-- [ ] No typed attention bias [H3d]
+- [ ] DeepStack injection vs no injection [H3f]
 - [ ] SFT only (no GRPO) [H5a]
 - [ ] Permutation test [H3c]
 - [ ] GT depth vs Depth Anything V2 [H2c]
 - [ ] Mean vs 15th-pct aggregation [H2e]
-- [ ] Scale ratio sweep (phi vs sqrt(e) vs pow2) [H2d]
+- [ ] Scale ratio sweep (e^(1/3) vs phi vs pow2) [H2d]
 - [ ] GRPO vs fDPO vs SFT-only [H5b]
 - [ ] Dense vs sparse rewards [H5c]
 

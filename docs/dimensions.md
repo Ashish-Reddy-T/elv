@@ -388,7 +388,10 @@ are confirmed complementary.
 
 ---
 
-## STEP 9: Position Pooling to SVA Grid (DEPRECATED)
+## STEP 9: Position Pooling to SVA Grid — DEPRECATED
+
+> **DEPRECATED (2026-04-05)**: Position pooling was eliminated by the icosahedral redesign.
+> With 1369 DINOv2-based SVA queries, 3D positions map 1:1 to queries — no pooling needed.
 
 ```
 Input:   [B, 1369, 3]    patch-level 3D positions (same as GATr input, BEFORE normalization)
@@ -536,7 +539,7 @@ gated cross-attention. This is the explicit position channel.  -->
 
 ---
 
-## STEP 11: SVA Cross-Attention (Aggregation 4 — The Critical Compression)
+## STEP 11: SVA Cross-Attention (Aggregation — Reduced Compression)
 
 ```
 Input tokens:
@@ -551,90 +554,85 @@ KV concatenation:
 KV type IDs:
   [0]*576 + [1]*1369 + [2]*1369 = [3314]    (0=SigLIP, 1=DINOv2, 2=GATr)
 
-Query initialization:
-  queries = SigLIP_tokens + query_embed
-  SigLIP_tokens: [B, 576, 4096]    (semantic features as starting point)
-  query_embed:   [576, 4096]        (learnable, nn.Parameter)
-  queries:       [B, 576, 4096]
+Query initialization (DINOv2 as structural anchor):
+  queries = DINOv2_tokens + query_embed
+  DINOv2_tokens: [B, 1369, 4096]    (structural features as starting point)
+  query_embed:   [1369, 4096]        (learnable, nn.Parameter)
+  queries:       [B, 1369, 4096]
 
 SVA Layer 1:
-  Pre-norm:  q_norm(queries) → [B, 576, 4096]
+  Pre-norm:  q_norm(queries) → [B, 1369, 4096]
              kv_norm(kv_tokens) → [B, 3314, 4096]
 
-  Q proj:    Linear(4096, 4096, bias=False) → [B, 576, 4096]
+  Q proj:    Linear(4096, 4096, bias=False) → [B, 1369, 4096]
   K proj:    Linear(4096, 4096, bias=False) → [B, 3314, 4096]
   V proj:    Linear(4096, 4096, bias=False) → [B, 3314, 4096]
 
   Reshape to heads (32 heads, 128 head_dim):
-    Q: [B, 576, 4096]  → [B, 576, 32, 128]  → [B, 32, 576, 128]
+    Q: [B, 1369, 4096]  → [B, 1369, 32, 128]  → [B, 32, 1369, 128]
     K: [B, 3314, 4096] → [B, 3314, 32, 128] → [B, 32, 3314, 128]
     V: [B, 3314, 4096] → [B, 3314, 32, 128] → [B, 32, 3314, 128]
 
   Typed attention bias (if enabled):
     bias_matrix: [3, 3]    (9 learnable scalars)
-    typed_mask:  [1, 1, 576, 3314]    (bias[query_type[i], kv_type[j]])
+    typed_mask:  [1, 1, 1369, 3314]    (bias[query_type[i], kv_type[j]]) [Here 1, 1 because for each layer (not each head within layer)]
     Added to attention logits before softmax
 
+  THINK OF THIS AS A MATRIX WITH q(row indices of 0,1,2) and k(column indices of 0,1,2) [0->SigLIP, 1->DINO, 2->GATr]
+
   Scaled dot-product attention:
-    attn_weights = softmax(Q @ K^T / √128 + typed_mask)    [B, 32, 576, 3314]
-    attn_out = attn_weights @ V                              [B, 32, 576, 128]
+    attn_weights = softmax(Q @ K^T / √128 + typed_mask)    [B, 32, 1369, 3314] (addition holds as same size))
+    attn_out = attn_weights @ V                              [B, 32, 1369, 128]
 
   Output projection:
-    [B, 32, 576, 128] → [B, 576, 4096] → Linear(4096, 4096) → [B, 576, 4096]
+    attn_out = [B, 32, 1369, 128] → [B, 1369, 4096] → Linear(4096, 4096) → [B, 1369, 4096]
 
   Residual + LayerNorm:
-    queries = LayerNorm(queries_in + attn_out)    [B, 576, 4096]
+    queries = LayerNorm(queries_in + attn_out)    [B, 1369, 4096]
+
+    q2 = LN(q + XAttn(LN(q), LN(kv)))
 
 SVA Layer 2:
   Same architecture, same KV pool (NOT updated — original 3314 tokens reused).
   Queries from Layer 1 output are refined by re-attending to original KV.
 
-  queries = LayerNorm(queries_layer1 + attn_out_layer2)    [B, 576, 4096]
+  queries = LayerNorm(queries_layer1 + attn_out_layer2)    [B, 1369, 4096]
 
-Output:  [B, 576, 4096]    fused spatial tokens
+  q3 = LN(q2 + XAttn(LN(q2), LN(kv)))
+
+Output:  q3 = [B, 1369, 4096]    fused spatial tokens
 ```
 
-**Information lost — this is the major compression point**:
+**Information lost — compression is now much milder**:
 
-- 3314 KV tokens → 576 output tokens = **5.75:1 compression**
+- 3314 KV tokens → 1369 output tokens = **2.42:1 compression** (was 5.75:1 with 576)
 - Each output token is a weighted average of all 3314 KV tokens (softmax-weighted)
-- The attention mechanism is soft: sharp boundaries become smooth gradients
-- Two objects in different DINOv2 patches but the same SVA query region are blended
+- Full 37×37 DINOv2/GATr spatial resolution is preserved through fusion
 
 **What survives**:
 
 - Each query can attend to ALL 3314 tokens — no information is structurally blocked
 - The typed attention bias lets the model upweight GATr tokens if geometry is useful
 - Two-layer design: layer 2 re-attends to the SAME original KV (not blurred outputs)
-- Query initialization from SigLIP preserves semantic base
+- Query initialization from DINOv2 preserves structural/spatial base
+- 1:1 correspondence between DINOv2 patches and SVA queries (no spatial pooling needed)
 
 **What's at risk**:
 
-- Fine spatial detail at the 37×37 DINOv2/GATr resolution is compressed to 24×24
 - Whether geometry survives depends on what the attention LEARNS to attend to
 - If training signal doesn't reward geometric precision, SVA may ignore GATr tokens
+- Compute cost: O(1369 × 3314) = 4.5M ops/head vs. O(576 × 3314) = 1.9M with old design
 
 **Hypothesis H3e tests this**: Compare 3314-token KV pool vs. pooling all to 576 first
 (1728-token KV). If 3314 wins, the full resolution KV matters.
-
-**Alternative: 1369 queries** (MOSTLY DOING THIS):
-
-- Q: [B, 1369, 4096]   (DINOv2 tokens as base, 37×37 grid)
-- KV: [B, 3314, 4096]  (same)
-- Output: [B, 1369, 4096]
-- Attention cost: O(1369 × 3314) = 4.5M ops/head (2.4× current)
-- Preserves full 37×37 spatial resolution through fusion
-- Eliminates need for position pooling (Step 9) — GridCellRoPE3D on raw positions
-- LLM cost: O((~~800+1369)²) vs. O((~~800+576)²) — roughly 3× more expensive
-- Validates/invalidates hypotheses H1d and H3e simultaneously
 
 ---
 
 ## STEP 12: RMS Norm Matching
 
 ```
-Input:   vision_tokens [B, 576, 4096]    (from SVA)
-         text_tokens   [B, T, 4096]      (from Qwen3 tokenizer, during training only)
+Input:   vision_tokens [B, 1369, 4096]    (from SVA)
+         text_tokens   [B, T, 4096]       (from Qwen3 tokenizer, during training only)
 
 Compute vision RMS norm:
   vision_rms = sqrt(mean(vision_tokens², dim=-1)).mean()    scalar
@@ -646,9 +644,9 @@ Update text RMS EMA (training only):
 
 Scale:
   scale = text_rms_ema / (vision_rms + 1e-6)              scalar
-  output = vision_tokens × scale                           [B, 576, 4096]
+  output = vision_tokens × scale                           [B, 1369, 4096]
 
-Output:  [B, 576, 4096]    (same shape, rescaled magnitudes)
+Output:  [B, 1369, 4096]    (same shape, rescaled magnitudes)
 ```
 
 **Information lost**: None structurally — this is a global scalar multiplication. The relative
@@ -657,40 +655,48 @@ relationships between tokens are perfectly preserved. Only the absolute magnitud
 **Why necessary**: Without this, vision token norms are 10-100× text norms. The LLM's
 attention softmax is dominated by vision token magnitudes, drowning out the RoPE positional
 signal. After scaling, vision and text tokens have comparable norms, so positional encoding
-(including GridCellRoPE3D) can actually influence attention patterns.
+(including IcosahedralRoPE3D) can actually influence attention patterns.
 
 ---
 
-## STEP 13: Position Routing
+## STEP 13: RoPE Monkey-Patch (replaces Position Routing)
 
 ```
 Input:
-  text_tokens:    [B, T, 4096]     T ≈ 128-256 (system + instruction + history)
-  spatial_tokens: [B, 576, 4096]   (from RMS norm matching)
-  spatial_rope3d: [B, 576, 64]     (from GridCellRoPE3D, Step 10)
+  text_tokens:    [B, T, 4096]      T ≈ 128-256 (system + instruction + history)
+  spatial_tokens: [B, 1369, 4096]   (from RMS norm matching)
+  positions_3d:   [B, 1369, 3]      (from Step 7, 3D patch positions in metres)
 
 Concatenation:
   combined = cat([text_tokens, spatial_tokens], dim=1)
-  → [B, T+576, 4096]
+  → [B, T+1369, 4096]
 
-Spatial mask:
-  is_spatial = [False]*T + [True]*576
-  → [B, T+576] boolean
+Spatial token mask:
+  is_spatial = [False]*T + [True]*1369
+  → [B, T+1369] boolean
 
-Text position IDs (M-RoPE):
-  temporal = arange(T)              [T]
-  height   = zeros(T)              [T]
-  width    = zeros(T)              [T]
-  text_mrope_ids = stack([temporal, height, width])    [B, 3, T]
+RoPE injection via monkey-patch (rope_patch.py):
+  The Catcher: model.forward() intercepts spatial_coords_3d and spatial_token_mask
+               from kwargs, stashes them on the rotary_emb module.
 
-Output: RoutedPositionBatch containing:
-  combined_tokens:         [B, T+576, 4096]
-  is_spatial_mask:         [B, T+576]
-  text_mrope_position_ids: [B, 3, T]
-  spatial_rope3d:          [B, 576, 64]
+  The Math: rotary_emb.forward() computes:
+    1. Standard M-RoPE cos/sin for ALL tokens     → [B, T+1369, 128]
+    2. IcosahedralRoPE3D for spatial positions     → [B, 1369, 96]
+    3. Pad to 128 with identity (cos=1, sin=0)     → [B, 1369, 128]
+    4. Overwrite cos/sin at spatial mask positions
+
+  Result:
+    Text tokens:    M-RoPE [24T, 20H, 20W] = 64 pairs (128 dims)
+    Spatial tokens: Icosahedral 48 pairs (96 dims) + 16 identity pairs (32 dims)
+
+  During autoregressive generation:
+    Spatial tokens are in KV cache from prefill.
+    Only new text tokens processed → patch is a no-op.
+
+Output: combined_tokens [B, T+1369, 4096] with position-aware cos/sin ready
 ```
 
-**Information lost**: None — this is pure bookkeeping (concatenation + type labeling).
+**Information lost**: None — this is position encoding injection, no content modification.
 
 ---
 
@@ -698,9 +704,10 @@ Output: RoutedPositionBatch containing:
 
 ```
 Input:
-  tokens:     [B, T+576, 4096]    mixed text + spatial sequence (T ≈ 200, total ≈ 776)
-  rope3d:     [B, 576, 64]        GridCellRoPE3D for spatial tokens
-  mrope_ids:  [B, 3, T]           M-RoPE IDs for text tokens
+  tokens:     [B, T+1369, 4096]   mixed text + spatial sequence (T ≈ 200, total ≈ 1569)
+  cos/sin:    [B, T+1369, 128]    from RoPE monkey-patch (Step 13)
+              Text positions: standard M-RoPE
+              Spatial positions: IcosahedralRoPE3D (48 pairs) + identity (16 pairs)
 
 Architecture (frozen backbone + LoRA):
   36 transformer layers, each:
@@ -714,24 +721,24 @@ Per layer (all 36):
   RoPE application (inside attention):
     For text tokens at position m:
       Standard M-RoPE: [24 temporal, 20 height, 20 width] = 64 rotary pairs
-      Apply rotation R(m) to first 64 dims of each head's Q and K
+      Apply rotation R(m) to all 128 dims of each head's Q and K
 
     For spatial tokens at position p=[x,y,z]:
-      GridCellRoPE3D: all 64 rotary pairs replaced
-      Apply rotation from rope3d[B, :, :64] to first 64 dims of Q and K
+      IcosahedralRoPE3D: 48 pairs (96 dims) encode 3D position
+      16 identity pairs (32 dims) with cos=1, sin=0 → position-agnostic
       Two spatial tokens at positions p₁, p₂ have attention modulated by
       the periodic distance between p₁ and p₂ — not sequence position
 
   Self-attention:
-    Q: [B, T+576, 4096] → [B, T+576, 32, 128] → [B, 32, T+576, 128]
-    K: [B, T+576, 4096] → [B, T+576, 8, 128]  → [B, 8, T+576, 128]
-    V: [B, T+576, 4096] → [B, T+576, 8, 128]  → [B, 8, T+576, 128]
+    Q: [B, T+1369, 4096] → [B, T+1369, 32, 128] → [B, 32, T+1369, 128]
+    K: [B, T+1369, 4096] → [B, T+1369, 8, 128]  → [B, 8, T+1369, 128]
+    V: [B, T+1369, 4096] → [B, T+1369, 8, 128]  → [B, 8, T+1369, 128]
 
-    GQA expansion: K, V each [B, 8, T+576, 128] → repeat 4× → [B, 32, T+576, 128]
-    Attention: [B, 32, T+576, T+576]    full self-attention map
-    Output: [B, 32, T+576, 128] → [B, T+576, 4096]
+    GQA expansion: K, V each [B, 8, T+1369, 128] → repeat 4× → [B, 32, T+1369, 128]
+    Attention: [B, 32, T+1369, T+1369]    full self-attention map
+    Output: [B, 32, T+1369, 128] → [B, T+1369, 4096]
 
-  FFN: [B, T+576, 4096] → [B, T+576, 12288] → [B, T+576, 4096]
+  FFN: [B, T+1369, 4096] → [B, T+1369, 12288] → [B, T+1369, 4096]
 
   LoRA (on Q, K, V, O projections):
     W_Q LoRA: (4096 × 32) + (32 × 4096) = 262,144 params
@@ -741,33 +748,18 @@ Per layer (all 36):
     Per layer total: ~852K params
     36 layers: ~30.7M params
 
-At layers {4, 8, 12, 16, 20, 24, 28, 32, 36} — Gated Cross-Attention injection:
-  (9 injection points, every 4th of 36 layers)
+DeepStack injection (native Qwen3-VL mechanism, replaces gated cross-attention):
+  Qwen3-VL's built-in mechanism for injecting encoder intermediate features.
+  At select early LLM layers, visual embeddings are added as residuals:
+    hidden_states[visual_pos_masks, :] += deepstack_visual_embeds
 
-  x = current hidden states    [B, T+576, 4096]
-  vision = spatial_tokens      [B, 576, 4096]    (STATIC — same across all 9 layers)
+  deepstack_visual_embeds: extracted from multi-layer SigLIP/DINOv2 features
+  visual_pos_masks: [B, T+1369] boolean marking spatial token positions
 
-  Cross-attention (GQA 32:8):
-    Q:  [B, T+576, 4096] → Q_proj(4096, 4096)  → [B, T+576, 32, 128]  → [B, 32, T+576, 128]
-    K:  [B, 576, 4096]   → K_proj(4096, 1024)   → [B, 576, 8, 128]    → [B, 8, 576, 128]
-    V:  [B, 576, 4096]   → V_proj(4096, 1024)   → [B, 576, 8, 128]    → [B, 8, 576, 128]
+  Zero additional trainable parameters — uses Qwen3-VL's native mechanism.
+  Replaces gated cross-attention (which had 9 layers × ~42M = ~378M params).
 
-    GQA expansion: K, V [B, 8, 576, 128] → [B, 32, 576, 128]
-    Attention: [B, 32, T+576, 576]
-    Output: [B, 32, T+576, 128] → [B, T+576, 4096] → O_proj → [B, T+576, 4096]
-
-  Gated residual:
-    x = x + tanh(alpha_attn) × cross_attn_out           [B, T+576, 4096]
-    alpha_attn initialized to 0 → tanh(0) = 0 → pure passthrough at init
-
-  FFN with gate:
-    x = x + tanh(alpha_ff) × FFN(LayerNorm(x))          [B, T+576, 4096]
-    alpha_ff initialized to 0 → tanh(0) = 0 → pure passthrough at init
-
-  Per injection layer: ~41.9M params (W_Q + W_K + W_V + W_O + FFN + 2 scalars)
-  9 layers: ~377M params
-
-Final LLM output:  [B, T+576, 4096]
+Final LLM output:  [B, T+1369, 4096]
 
 Decoding (autoregressive):
   LM head: Linear(4096, vocab_size) → logits
@@ -777,9 +769,10 @@ Decoding (autoregressive):
 
 **Information flow through the LLM**:
 
-- Text tokens get spatial information via gated cross-attention (9 injection points)
+- Text tokens get spatial information via self-attention (they attend to spatial tokens in the same sequence)
+- DeepStack injects multi-layer encoder features at early layers via residual addition
 - Spatial tokens get language context via self-attention (they attend to text tokens)
-- GridCellRoPE3D modulates which spatial tokens attend to each other based on 3D distance
+- IcosahedralRoPE3D modulates which spatial tokens attend to each other based on 3D distance
 - M-RoPE modulates text token attention based on sequential position
 - The two position encoding systems coexist in the same attention computation
 
@@ -788,72 +781,64 @@ Decoding (autoregressive):
 ## COMPLETE TENSOR FLOW SUMMARY TABLE
 
 
-| Step | Operation         | Input Shape      | Output Shape                 | Compression             | Info Lost                |
-| ---- | ----------------- | ---------------- | ---------------------------- | ----------------------- | ------------------------ |
-| 0    | Habitat render    | —                | [B, H, W, 3] + [B, 518, 518] | —                       | —                        |
-| 1a   | Resize for SigLIP | [B, H, W, 3]     | [B, 3, 384, 384]             | (H/384)² pixels         | Sub-pixel detail         |
-| 1b   | Resize for DINOv2 | [B, H, W, 3]     | [B, 3, 518, 518]             | (H/518)² pixels         | Sub-pixel detail         |
-| 2    | SigLIP encoding   | [B, 3, 384, 384] | [B, 576, 3456]               | 256px → 1152d per patch | Within-patch pixels      |
-| 3    | SigLIP projector  | [B, 576, 3456]   | [B, 576, 4096]               | None (upsampling)       | ~None                    |
-| 4    | DINOv2 encoding   | [B, 3, 518, 518] | [B, 1369, 3072]              | 196px → 1024d per patch | Within-patch pixels      |
-| 5    | DINOv2 projector  | [B, 1369, 3072]  | [B, 1369, 4096]              | None (upsampling)       | ~None                    |
-| 6    | Backprojection    | [B, 518, 518]    | [B, 518, 518, 3]             | None (invertible)       | None                     |
-| 7    | Percentile agg.   | [B, 518, 518, 3] | [B, 1369, 3]                 | **196:1** per patch     | Sub-patch 3D detail      |
-| 8    | GATr processing   | [B, 1369, 3]     | [B, 1369, 4096]              | 3 → 48 → 4096 (expand)  | Absolute orientation     |
-| 9    | Position pooling  | [B, 1369, 3]     | [B, 576, 3]                  | **~2.4:1** per cell     | Sub-cell position        |
-| 10   | GridCellRoPE3D    | [B, 576, 3]      | [B, 576, 64]                 | 3 → 64 (expand)         | Aliasing (>0.63m period) |
-| 11   | SVA fusion        | [B, 3314, 4096]  | [B, 576, 4096]               | **5.75:1** (attention)  | Fine spatial detail      |
-| 12   | RMS norm match    | [B, 576, 4096]   | [B, 576, 4096]               | None (scalar multiply)  | None                     |
-| 13   | Position routing  | Various          | [B, T+576, 4096]             | None (concatenation)    | None                     |
-| 14   | LLM + cross-attn  | [B, T+576, 4096] | [B, T+576, 4096]             | None                    | —                        |
+| Step | Operation          | Input Shape       | Output Shape                  | Compression             | Info Lost                |
+| ---- | ------------------ | ----------------- | ----------------------------- | ----------------------- | ------------------------ |
+| 0    | Habitat render     | —                 | [B, H, W, 3] + [B, 518, 518]  | —                       | —                        |
+| 1a   | Resize for SigLIP  | [B, H, W, 3]      | [B, 3, 384, 384]              | (H/384)² pixels         | Sub-pixel detail         |
+| 1b   | Resize for DINOv2  | [B, H, W, 3]      | [B, 3, 518, 518]              | (H/518)² pixels         | Sub-pixel detail         |
+| 2    | SigLIP encoding    | [B, 3, 384, 384]  | [B, 576, 3456]                | 256px → 1152d per patch | Within-patch pixels      |
+| 3    | SigLIP projector   | [B, 576, 3456]    | [B, 576, 4096]                | None (upsampling)       | ~None                    |
+| 4    | DINOv2 encoding    | [B, 3, 518, 518]  | [B, 1369, 3072]               | 196px → 1024d per patch | Within-patch pixels      |
+| 5    | DINOv2 projector   | [B, 1369, 3072]   | [B, 1369, 4096]               | None (upsampling)       | ~None                    |
+| 6    | Backprojection     | [B, 518, 518]     | [B, 518, 518, 3]              | None (invertible)       | None                     |
+| 7    | Percentile agg.    | [B, 518, 518, 3]  | [B, 1369, 3]                  | **196:1** per patch     | Sub-patch 3D detail      |
+| 8    | GATr processing    | [B, 1369, 3]      | [B, 1369, 4096]               | 3 → 48 → 4096 (expand)  | Absolute orientation     |
+| 9    | ~~Pos pooling~~    | ~~DEPRECATED~~    | ~~DEPRECATED~~                | ~~removed~~             | ~~N/A~~                  |
+| 10   | IcosahedralRoPE3D  | [B, 1369, 3]      | [B, 1369, 96]                 | 3 → 96 (expand)         | Aliasing (>0.63m period) |
+| 11   | SVA fusion         | [B, 3314, 4096]   | [B, 1369, 4096]               | **2.42:1** (attention)  | Mild spatial blending    |
+| 12   | RMS norm match     | [B, 1369, 4096]   | [B, 1369, 4096]               | None (scalar multiply)  | None                     |
+| 13   | RoPE monkey-patch  | Various           | [B, T+1369, 4096]             | None (PE injection)     | None                     |
+| 14   | LLM + DeepStack    | [B, T+1369, 4096] | [B, T+1369, 4096]             | None                    | —                        |
 
 
-**Three major information bottlenecks** (ordered by severity):
+**Two major information bottlenecks** (ordered by severity):
 
-1. **SVA fusion**: 3314 → 576 tokens (5.75:1), soft attention blending
-2. **Percentile aggregation**: 268K pixels → 1369 points (196:1 per patch)
-3. **Position pooling**: 1369 → 576 positions (~2.4:1 average)
+1. **Percentile aggregation**: 268K pixels → 1369 points (196:1 per patch)
+2. **SVA fusion**: 3314 → 1369 tokens (2.42:1), soft attention blending
+
+Note: Position pooling (formerly #3 at 2.4:1) was eliminated — 1369 positions map 1:1 to SVA queries.
 
 ---
-
+ 
 ## ALTERNATIVE DESIGNS AND THEIR HYPOTHESIS TESTS
-
-### Alt-A: 1369-Query SVA (Preserve Full Resolution)
-
-Change SVA queries from 576 to 1369 (DINOv2 grid).
-
+ 
+### Alt-A: 576-Query SVA with SigLIP base (ablation baseline)
+ 
+The previous design used 576 queries with SigLIP as the query base.
+This is now an ablation (H1d) to validate the 1369-query choice.
+ 
 ```
-Current:                                    Alternative:
-Q:  [B, 576, 4096]  (SigLIP base)         Q:  [B, 1369, 4096]  (DINOv2 base)
+Current (1369):                             Ablation (576):
+Q:  [B, 1369, 4096]  (DINOv2 base)         Q:  [B, 576, 4096]  (SigLIP base)
 KV: [B, 3314, 4096]                        KV: [B, 3314, 4096]
-Out: [B, 576, 4096]                         Out: [B, 1369, 4096]
-
-SVA cost:  O(576 × 3314)  = 1.9M            SVA cost:  O(1369 × 3314) = 4.5M  (+2.4×)
-LLM cost:  O(776²)        = 0.6M            LLM cost:  O(1569²)       = 2.5M  (+4.0×)
-Position:  pool 1369→576, then RoPE          Position:  direct 1369→RoPE (no pooling)
-Params:    query_embed [576, 4096] = 2.4M    Params:    query_embed [1369, 4096] = 5.6M
+Out: [B, 1369, 4096]                        Out: [B, 576, 4096]
+ 
+SVA cost:  O(1369 × 3314) = 4.5M           SVA cost:  O(576 × 3314)  = 1.9M  (2.4× cheaper)
+LLM cost:  O(1569²)       = 2.5M           LLM cost:  O(776²)        = 0.6M  (4× cheaper)
+Position:  direct 1369→RoPE (no pooling)    Position:  pool 1369→576, then RoPE
 ```
-
-**If this outperforms 576**: Validates H1d (full resolution matters) and H3e (3314 > 1728 KV).
-Shows that SVA compression is the bottleneck, not GATr or depth quality.
-
-**If 576 matches or beats 1369**: The attention mechanism successfully compresses without
-losing task-relevant geometry. The 576 design is justified on efficiency grounds.
-
+ 
 ### Alt-B: No SVA, Direct Concatenation (LLaVA-style)
-
+ 
 Replace SVA with simple concatenation + MLP.
-
+ 
 ```
 Current:                                    Alternative:
-SVA: [B, 3314, 4096] → [B, 576, 4096]     Concat: [B, 3314, 4096] → MLP → [B, 3314, 4096]
+SVA: [B, 3314, 4096] → [B, 1369, 4096]    Concat: [B, 3314, 4096] → MLP → [B, 3314, 4096]
                                             All 3314 tokens enter LLM directly
-
-LLM cost: O(776²)  = 0.6M                  LLM cost: O(3514²) = 12.3M  (+20×)
+ 
+LLM cost: O(1569²) = 2.5M                  LLM cost: O(3514²) = 12.3M  (+5×)
 ```
-
-**Hypothesis H3a tests this**: If gated cross-attention outperforms concatenation by >5%,
-cross-attention fusion is validated. If concatenation wins, our SVA is the bottleneck.
 
 ### Alt-C: Mean Aggregation Instead of 15th-Percentile
 
@@ -867,17 +852,16 @@ Both produce: [B, 1369, 3]
 **Hypothesis H2e tests this**: If 15th-pct wins, foreground bias is validated.
 If mean wins, the percentile selection is adding noise not signal.
 
-### Alt-D: Standard M-RoPE for All Tokens (No GridCellRoPE3D)
-
+### Alt-D: Standard M-RoPE for All Tokens (No IcosahedralRoPE3D)
+ 
 ```
-Current:  Text → M-RoPE [24t, 20h, 20w]
-          Spatial → GridCellRoPE3D [64 dims from 3D positions]
-
+Current:  Text → M-RoPE [24t, 20h, 20w] = 64 pairs
+          Spatial → IcosahedralRoPE3D [48 pairs from 3D positions] + 16 identity
+ 
 Alt:      All tokens → M-RoPE [24t, 20h, 20w]
-          Spatial tokens get sequential positions (position 201, 202, ... 776)
+          Spatial tokens get sequential positions (position 201, 202, ... 1569)
 ```
-
-**Hypothesis H2b tests this**: If GridCellRoPE3D wins, 3D-aware positional encoding
+**Hypothesis H2b tests this**: If IcosahedralRoPE3D wins, 3D-aware positional encoding
 is confirmed essential. If M-RoPE matches, the explicit geometry in the feature channel
 (GATr → SVA) is sufficient without positional encoding.
 
@@ -898,7 +882,7 @@ SigLIP only:                                DINOv2 only:
 Current:  KV = SigLIP[576] + DINOv2[1369] + GATr[1369] = 3314
 Alt:      KV = SigLIP[576] + DINOv2[1369] = 1945
 
-SVA cost: O(576 × 1945) = 1.1M  (vs current 1.9M — 42% cheaper)
+SVA cost: O(1369 × 1945) = 2.7M  (vs current 4.5M — 40% cheaper)
 ```
 
 **Hypothesis H2a tests this**: If removing GATr drops metric tasks but not semantic
@@ -926,27 +910,28 @@ hypothesized, but could be added as a sweep alongside H1d/H3e.
 FEATURE CHANNEL (learned, through SVA):
   "What is here" — semantic + structural + geometric features
   ┌──────────────────────────────────────────────────────────────┐
-  │ SigLIP[576,4096] ─┐                                         │
-  │ DINOv2[1369,4096] ─┼─→ SVA[3314→576,4096] → NormMatch → GatedCrossAttn │
-  │ GATr[1369,4096] ──┘     ↑                                   │
+  │ SigLIP[576,4096] ─┐                                          │
+  │ DINOv2[1369,4096] ─┼─→ SVA[3314→1369,4096] → NormMatch → DeepStack │
+  │ GATr[1369,4096] ──┘     ↑                                    │
   │                    COMPRESSION HERE                          │
-  │                    5.75:1 via attention                       │
-  │                    Geometry at risk                           │
+  │                    2.42:1 via attention                      │
+  │                    Geometry better preserved                 │
   └──────────────────────────────────────────────────────────────┘
 
 POSITION CHANNEL (deterministic, bypasses SVA):
   "Where is here" — raw 3D coordinates as rotary encoding
   ┌──────────────────────────────────────────────────────────────┐
-  │ Depth[518,518] → Backproject[268K,3] → 15th%ile[1369,3]     │
-  │   → PoolToSVA[576,3] → GridCellRoPE3D[576,64]              │
-  │   → Applied as Q,K rotations in LLM attention               │
+  │ Depth[518,518] → Backproject[268K,3] → 15th%ile[1369,3]      │
+  │   → IcosahedralRoPE3D[1369,96] (no pooling — 1:1 mapping)    │
+  │   → Padded to [1369,128] with identity pairs                 │
+  │   → Applied as Q,K rotations in LLM attention via monkey-patch│
   │                                                              │
-  │ Mild compression: 2.4:1 position averaging                  │
-  │ Geometry preserved: explicit 3D coordinates                  │
+  │ No compression: 1369 positions map 1:1 to 1369 SVA queries   │
+  │ Geometry fully preserved: explicit 3D coordinates            │
   └──────────────────────────────────────────────────────────────┘
 
-The feature channel can lose geometric detail through SVA compression.
-The position channel preserves explicit 3D coordinates regardless.
+The feature channel can lose geometric detail through SVA compression (2.42:1).
+The position channel preserves explicit 3D coordinates with zero compression.
 Together, they provide both "what" and "where" to the LLM.
 ```
 
@@ -966,13 +951,16 @@ DINOv2 MLP projector                   ~29M        Linear(3072→4096) + Linear(
 GATr MLP projector                     ~17M        Linear(48→4096) + Linear(4096→4096)
 GATr 8 equivariant blocks              ~12M        8 × GATrBlock(mv=16, s=32)
 
-SVA query embed                        2.4M        [576, 4096]
+SVA query embed                        5.6M        [1369, 4096]
 SVA cross-attn (2 layers)              ~84M        2 × (Q+K+V+O proj + LayerNorms)
 SVA typed attention bias               9           [3, 3]
-
-Gated cross-attn (9 layers)            ~377M       9 × (Q+K_gqa+V_gqa+O + FFN + 2 gates)
+ 
 Qwen3 LoRA rank-32                     ~31M        36 × (Q+K+V+O LoRA adapters)
+DeepStack (native Qwen3-VL)            0           Uses built-in mechanism (no new params)
 ─────────────────────────────────────────────────────────────────
-Total trainable:                       ~583M       6.6% of ~8,890M total
+Total trainable:                       ~206M       ~2.3% of ~8,890M total
+ 
+Note: Gated cross-attention (~377M, 9 layers) was removed in the icosahedral redesign.
+Qwen3-VL's native DeepStack mechanism replaces it with zero additional trainable parameters.
 ```
 

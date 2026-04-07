@@ -1,6 +1,12 @@
-"""Tests for Stage 4 position routing."""
+"""DEPRECATED: Tests for Stage 4 position routing.
+
+Position routing was replaced by RoPE monkey-patch (rope_patch.py) (2026-04-05).
+These tests are kept for ablation reference but skipped in the main test suite.
+"""
 
 import pytest
+
+pytestmark = pytest.mark.skip(reason="Position routing deprecated — replaced by rope_patch.py")
 import torch
 
 from spatialvlm.backbone.position_routing import PositionRouter

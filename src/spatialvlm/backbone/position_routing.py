@@ -1,6 +1,13 @@
-"""Position routing utilities for Stage 4.
+"""DEPRECATED: Position routing — replaced by RoPE monkey-patch (rope_patch.py).
 
-Text tokens keep standard M-RoPE position indexing.
+The icosahedral redesign (2026-04-05) replaces this module with a monkey-patch
+that directly modifies Qwen3-VL's RoPE embeddings:
+- Text tokens: standard M-RoPE (unchanged)
+- Spatial tokens: IcosahedralRoPE3D (48 pairs + 16 identity pairs)
+
+See src/spatialvlm/backbone/rope_patch.py for the new implementation.
+
+Original design: Text tokens keep standard M-RoPE position indexing.
 Spatial tokens carry GridCellRoPE3D rotations and should not use text sequence positions.
 """
 

@@ -1,6 +1,13 @@
-"""Gated cross-attention block for LLM injection (Stage 4 bridge).
+"""DEPRECATED: Gated cross-attention block — replaced by Qwen3-VL's native DeepStack.
 
-Pattern follows Flamingo-style gated residual injection:
+The icosahedral redesign (2026-04-05) removed gated cross-attention in favor of:
+1. Spatial tokens injected directly into the LLM main sequence (1369 tokens)
+2. Qwen3-VL's DeepStack mechanism for multi-layer visual feature injection
+
+This file is kept for ablation reference (testing injection mechanisms). Do not
+use in the main pipeline.
+
+Original pattern follows Flamingo-style gated residual injection:
   x <- x + tanh(alpha_attn) * CrossAttention(x, vision)
   x <- x + tanh(alpha_ff)   * FeedForward(x)
 

@@ -226,15 +226,22 @@ class SigLIP2Encoder(nn.Module):
             layer_0idx = layer_1idx - 1
             h = self._hook_outputs[layer_0idx]  # [B, T, hidden_size]
 
-            # Strip CLS token if the sequence length is n_patches + 1
-            # SigLIP typically has no CLS, but handle it defensively
-            if h.shape[1] == self._n_patches + 1:
+            # Handle variable token counts from NaFlex or CLS-prepended models.
+            # SigLIP2 NaFlex may return more tokens than n_patches due to padding
+            # or aspect-ratio-dependent token counts. We take the first n_patches.
+            n_tokens = h.shape[1]
+            if n_tokens == self._n_patches + 1:
+                # CLS token at position 0 — strip it
                 h = h[:, 1:, :]   # [B, n_patches, hidden_size]
-            elif h.shape[1] != self._n_patches:
+            elif n_tokens > self._n_patches:
+                # NaFlex padding or extra tokens — truncate to n_patches
+                h = h[:, :self._n_patches, :]  # [B, n_patches, hidden_size]
+            elif n_tokens < self._n_patches:
                 raise RuntimeError(
-                    f"Unexpected token count {h.shape[1]} at layer {layer_1idx}. "
-                    f"Expected {self._n_patches} or {self._n_patches + 1}. "
-                    "Check model architecture and image_size/patch_size config."
+                    f"Token count {n_tokens} at layer {layer_1idx} is less than "
+                    f"expected {self._n_patches}. Check image_size/patch_size config "
+                    f"or ensure input resolution matches ({self._image_size}x"
+                    f"{self._image_size})."
                 )
 
             features.append(h)  # [B, n_patches, hidden_size]
