@@ -87,18 +87,28 @@ class _IdentityBlock(nn.Module):
         return x
 
 
-class _DummySigLIPModel(nn.Module):
+class _DummySigLIPVisionModel(nn.Module):
+    """Mimics Siglip2VisionTransformer: has encoder.layers and a forward()."""
+
     def __init__(self, hidden_size: int, num_layers: int, n_tokens: int) -> None:
         super().__init__()
         self._hidden_size = hidden_size
         self._n_tokens = n_tokens
-        self.vision_model = nn.Module()
-        self.vision_model.encoder = nn.Module()
-        self.vision_model.encoder.layers = nn.ModuleList(
+        self.encoder = nn.Module()
+        self.encoder.layers = nn.ModuleList(
             [_IdentityBlock() for _ in range(num_layers)]
         )
+        # Non-Linear patch_embedding so NaFlex detection returns False
+        self.embeddings = nn.Module()
+        self.embeddings.patch_embedding = nn.Conv2d(3, hidden_size, kernel_size=1)
 
-    def forward(self, pixel_values: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        pixel_values: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        spatial_shapes: torch.Tensor | None = None,
+        **kwargs: object,
+    ) -> torch.Tensor:
         hidden = torch.ones(
             pixel_values.shape[0],
             self._n_tokens,
@@ -106,9 +116,15 @@ class _DummySigLIPModel(nn.Module):
             device=pixel_values.device,
             dtype=pixel_values.dtype,
         )
-        for layer in self.vision_model.encoder.layers:
+        for layer in self.encoder.layers:
             hidden = layer(hidden)
         return hidden
+
+
+class _DummySigLIPModel(nn.Module):
+    def __init__(self, hidden_size: int, num_layers: int, n_tokens: int) -> None:
+        super().__init__()
+        self.vision_model = _DummySigLIPVisionModel(hidden_size, num_layers, n_tokens)
 
 
 class _DummyDINOModel(nn.Module):

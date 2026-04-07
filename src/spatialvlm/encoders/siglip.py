@@ -156,6 +156,9 @@ class SigLIP2Encoder(nn.Module):
         patches_per_side = self._image_size // self._patch_size
         self._n_patches: int = patches_per_side * patches_per_side
 
+        # NaFlex detection — updated at load_model() time by inspecting patch_embedding
+        self._is_naflex: bool = False
+
         # Register hooks to capture intermediate features
         # Keys: 0-indexed layer number
         self._hook_outputs: dict[int, torch.Tensor] = {}
@@ -187,6 +190,46 @@ class SigLIP2Encoder(nn.Module):
             hook = encoder_layers[layer_0idx].register_forward_hook(self._make_hook(layer_0idx))
             self._hooks.append(hook)
 
+        # Detect NaFlex: patch_embedding is nn.Linear (expects pre-patchified input)
+        # vs standard SigLIP: patch_embedding is nn.Conv2d (accepts raw [B, C, H, W])
+        try:
+            patch_emb = self._model.vision_model.embeddings.patch_embedding
+            self._is_naflex = isinstance(patch_emb, nn.Linear)
+        except AttributeError:
+            self._is_naflex = False
+
+    def _patchify(
+        self, pixel_values: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Convert raw images to NaFlex-compatible patchified format.
+
+        Parameters
+        ----------
+        pixel_values : Tensor[B, C, H, W]
+            Raw images (e.g. [B, 3, 384, 384]).
+
+        Returns
+        -------
+        patches : Tensor[B, num_patches, patch_size² × C]
+            Flattened patch tokens.
+        spatial_shapes : Tensor[B, 2]
+            [height_patches, width_patches] for each image.
+        """
+        B, C, H, W = pixel_values.shape
+        ps = self._patch_size
+        pH, pW = H // ps, W // ps
+
+        # [B, C, pH, ps, pW, ps] → [B, pH, pW, C, ps, ps] → [B, pH*pW, C*ps*ps]
+        patches = pixel_values.reshape(B, C, pH, ps, pW, ps)
+        patches = patches.permute(0, 2, 4, 1, 3, 5).contiguous()
+        patches = patches.reshape(B, pH * pW, C * ps * ps)  # [B, num_patches, patch_dim]
+
+        spatial_shapes = torch.tensor(
+            [[pH, pW]], device=pixel_values.device, dtype=torch.long
+        ).expand(B, -1)  # [B, 2]
+
+        return patches, spatial_shapes
+
     def _make_hook(self, layer_0idx: int):
         """Create a forward hook that stores hidden states for the given layer."""
         def hook(module: nn.Module, input: tuple, output) -> None:  # noqa: ARG001
@@ -217,8 +260,25 @@ class SigLIP2Encoder(nn.Module):
             raise RuntimeError("SigLIP model is unavailable. Call load_model() before forward().")
 
         self._hook_outputs.clear()
+        # Call vision_model directly — the full Siglip2Model also runs a text encoder
+        # which requires input_ids. We only need vision features + our hooks.
+        vision_model = getattr(self._model, "vision_model", self._model)
         with torch.no_grad():
-            _ = self._model(pixel_values=pixel_values)
+            if self._is_naflex and pixel_values.ndim == 4:
+                # NaFlex uses nn.Linear patch embedding — needs pre-patchified input
+                pv, spatial_shapes = self._patchify(pixel_values)
+                # All patches valid — no padding
+                attn_mask = torch.ones(
+                    pv.shape[0], pv.shape[1],
+                    device=pv.device, dtype=pv.dtype,
+                )  # [B, num_patches]
+                _ = vision_model(
+                    pixel_values=pv,
+                    attention_mask=attn_mask,
+                    spatial_shapes=spatial_shapes,
+                )
+            else:
+                _ = vision_model(pixel_values=pixel_values)
 
         # Collect features in layer order and strip CLS token if present
         features = []

@@ -38,7 +38,7 @@ where information is lost, and what design alternatives exist at each stage.
                   ▼
           ┌──────────────────────────────┐
           │   SVA CROSS-ATTENTION        │  ← KV from all 3 streams
-          │   576 queries × 3314 KV      │  ← Positions from depth pipeline
+          │  1369 queries × 3314 KV      │  ← Positions from depth pipeline
           └──────────────┬───────────────┘
                          │
                          ▼
@@ -47,8 +47,8 @@ where information is lost, and what design alternatives exist at each stage.
                          ▼
           ┌──────────────────────────────┐
           │   QWEN3-VL-8B BACKBONE       │  ← GridCellRoPE3D on spatial tokens
-          │   + 9× Gated Cross-Attention │  ← M-RoPE on text tokens
-          │   + LoRA rank-32             │
+          │    + LoRA rank-32            │  ← M-RoPE on text tokens
+          │                              │
           └──────────────┬───────────────┘
                          │
                          ▼
@@ -581,7 +581,7 @@ SVA Layer 1:
   THINK OF THIS AS A MATRIX WITH q(row indices of 0,1,2) and k(column indices of 0,1,2) [0->SigLIP, 1->DINO, 2->GATr]
 
   Scaled dot-product attention:
-    attn_weights = softmax(Q @ K^T / √128 + typed_mask)    [B, 32, 1369, 3314] (addition holds as same size))
+    attn_weights = softmax(Q @ K^T / √128 + typed_mask)    [B, 32, 1369, 3314] (addition holds as same size)
     attn_out = attn_weights @ V                              [B, 32, 1369, 128]
 
   Output projection:

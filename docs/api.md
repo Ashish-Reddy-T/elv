@@ -6,6 +6,7 @@ Auto-generated from `src/spatialvlm/` source files.
 
 ## Table of Contents
 
+- [spatialvlm (top-level)](#spatialvlm-top-level)
 - [spatialvlm.config](#spatialvlmconfig)
 - [spatialvlm.encoders](#spatialvlmencoders)
 - [spatialvlm.geometry](#spatialvlmgeometry)
@@ -15,6 +16,49 @@ Auto-generated from `src/spatialvlm/` source files.
 - [spatialvlm.data](#spatialvlmdata)
 - [spatialvlm.training](#spatialvlmtraining)
 - [spatialvlm.eval](#spatialvlmeval)
+
+---
+
+## `spatialvlm` (top-level)
+
+### `class SpatialVLM(nn.Module)`
+
+**Module:** `spatialvlm/model.py`
+
+Integrated SpatialVLM model wiring all 5 architectural stages into a single `nn.Module`. This is the primary entry point for the full pipeline.
+
+**Constructor:**
+
+```python
+SpatialVLM(
+    config: SpatialVLMConfig | None = None,
+    device: torch.device | None = None,
+    lazy_load_encoders: bool = True,
+    lazy_load_backbone: bool = True,
+    local_files_only: bool = False,
+)
+```
+
+**Sub-modules:**
+
+| Attribute | Type | Stage | Description |
+|---|---|---|---|
+| `siglip_encoder` | `SigLIP2Encoder` | 1 | Frozen SigLIP2-SO400M encoder |
+| `dinov2_encoder` | `DINOv2Encoder` | 1 | Frozen DINOv2-L encoder |
+| `siglip_projector` | `MLPProjector` | 1 | 3456 → 4096 projection |
+| `dinov2_projector` | `MLPProjector` | 1 | 3072 → 4096 projection |
+| `gatr` | `GATrWrapper` | 2 | 8-block GATr with invariant extraction |
+| `sva` | `SpatialVisionAggregator` | 3 | 1369-query cross-attention fusion |
+| `norm_matching` | `RMSNormMatching` | 3 | Vision→text magnitude scaling |
+| `backbone` | `Qwen3VLBackbone` | 4 | Qwen3-VL-8B + LoRA + RoPE patch |
+
+**Methods:**
+
+- `encode_vision(siglip_pixels: Tensor[B, 3, 384, 384], dinov2_pixels: Tensor[B, 3, 518, 518]) -> tuple[Tensor[B, 576, 4096], Tensor[B, 1369, 4096]]` -- Stage 1: Run dual encoders and project.
+- `encode_geometry(depth: Tensor[B, 518, 518], intrinsics: CameraIntrinsics) -> tuple[Tensor[B, 1369, 4096], Tensor[B, 1369, 3]]` -- Stage 2: Backproject, aggregate, GATr. Returns `(gatr_tokens, positions_3d)`.
+- `fuse(siglip_tokens, dinov2_tokens, gatr_tokens, text_tokens=None) -> Tensor[B, 1369, 4096]` -- Stage 3: SVA + RMS norm matching.
+- `build_deepstack_inputs(fused_tokens, positions_3d, input_ids, spatial_start_idx) -> dict` -- Build kwargs for backbone forward: `spatial_coords_3d`, `spatial_token_mask`, `deepstack_visual_embeds`.
+- `forward(siglip_pixels, dinov2_pixels, depth, intrinsics, input_ids, spatial_start_idx=0, text_tokens=None, attention_mask=None, labels=None, **backbone_kwargs) -> Any` -- Full pipeline: Stages 1→2→3→4. Returns LLM output with loss (if labels provided) and logits.
 
 ---
 
@@ -52,15 +96,15 @@ Configuration for the geometric branch (Stage 2).
 | `gatr_mv_channels` | `int` | `16` | Multivector channels per token |
 | `gatr_s_channels` | `int` | `32` | Scalar channels per token |
 | `pga_dim` | `int` | `16` | PGA basis dimension (mathematical constant) |
-| `n_tetra_dirs` | `int` | `4` | Tetrahedral directions for GridCellRoPE3D |
-| `n_freqs` | `int` | `8` | Golden-ratio spaced frequencies |
-| `base_freq` | `float` | `10.0` | Base frequency f_k = base_freq * phi^k |
-| `golden_ratio` | `float` | `1.618033988749895` | Golden ratio phi |
+| `n_icosahedral_dirs` | `int` | `6` | Icosahedral directions (6 antipodal pairs on S²) |
+| `n_freqs` | `int` | `8` | e^(1/3)-spaced frequencies (optimal for 3D) |
+| `base_freq` | `float` | `10.0` | Base frequency f_k = base_freq × e^(k/3) |
+| `freq_ratio` | `float` | `1.3956124250860895` | e^(1/3), optimal scale ratio for p=3 dims |
 
 **Properties:**
 
 - `gatr_invariant_dim -> int` -- Invariant features dim = gatr_s_channels + gatr_mv_channels (48).
-- `rope3d_dims -> int` -- Output dims: n_tetra_dirs * n_freqs * 2 = 64.
+- `rope3d_dims -> int` -- Output dims: n_icosahedral_dirs × n_freqs × 2 = 96. Padded to 128 at injection with 16 identity pairs.
 
 ### `class FusionConfig`
 
@@ -68,12 +112,13 @@ Configuration for the fusion stage (Stage 3).
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `sva_num_queries` | `int` | `576` | SVA query count (matches SigLIP patches) |
+| `sva_num_queries` | `int` | `1369` | SVA query count (matches DINOv2 patches, 37×37) |
 | `sva_kv_tokens` | `int` | `3314` | Total KV tokens (576 + 1369 + 1369) |
 | `sva_num_layers` | `int` | `2` | Number of SVA cross-attention layers |
-| `cross_attn_layers` | `list[int]` | `[4,8,12,16,20,24,28,32,36]` | Gated cross-attention injection layers |
 | `norm_ema_momentum` | `float` | `0.99` | RMS norm matching EMA momentum |
 | `use_typed_attention_bias` | `bool` | `True` | Enable 3x3 learned type bias matrix |
+
+**Note:** `cross_attn_layers` was removed — gated cross-attention replaced by DeepStack (Qwen3-VL's native mechanism). DeepStack injects `hidden_states[spatial_mask] += fused_visual_embeds` at early LLM layers with zero additional trainable parameters.
 
 ### `class BackboneConfig`
 
@@ -129,7 +174,7 @@ SigLIP2Encoder(
 **Methods:**
 
 - `load_model() -> None` -- Load SigLIP weights and register extraction hooks.
-- `forward(pixel_values: Tensor[B, 3, H, W]) -> Tensor[B, n_patches, n_layers * hidden_size]` -- Extract multi-layer features. Default output: `[B, 576, 3456]` (576 = 24^2, 3456 = 3 * 1152).
+- `forward(pixel_values: Tensor[B, 3, H, W]) -> Tensor[B, n_patches, n_layers * hidden_size]` -- Extract multi-layer features. Default output: `[B, 576, 3456]` (576 = 24^2, 3456 = 3 * 1152). Handles NaFlex variable token counts: strips CLS token if present, truncates excess padding tokens, and raises on insufficient tokens.
 
 **Properties:**
 
@@ -227,9 +272,11 @@ Aggregate 3D points to patch-level using k-th percentile depth. For H=W=518, pat
 
 ---
 
-### `pool_positions_to_sva_grid()`
+### `pool_positions_to_sva_grid()` -- DEPRECATED
 
 **Module:** `spatialvlm/geometry/backproject.py`
+
+> **DEPRECATED**: No longer needed — SVA now uses 1369 DINOv2-based queries with 1:1 position-to-query mapping. Kept for backward compatibility and ablation testing (H1d: 1369 vs 576 queries).
 
 ```python
 def pool_positions_to_sva_grid(
@@ -239,7 +286,7 @@ def pool_positions_to_sva_grid(
 ) -> Tensor[B, target_h * target_w, 3]
 ```
 
-Pool 3D positions from the DINOv2 patch grid (37x37) to the SVA query grid (24x24) via adaptive average pooling. Ensures geometric consistency between fused token content and positional encoding.
+Pool 3D positions from the DINOv2 patch grid (37x37) to the SVA query grid (24x24) via adaptive average pooling.
 
 ---
 
@@ -277,25 +324,48 @@ GATrWrapper(
 
 ---
 
-### `class GridCellRoPE3D(nn.Module)`
+### `class IcosahedralRoPE3D(nn.Module)`
 
 **Module:** `spatialvlm/geometry/gridcell_rope3d.py`
 
-Rotary position encoding for 3D spatial coordinates. Tetrahedral Fourier basis inspired by grid cell theory. Zero learnable parameters.
+Rotary position encoding for 3D spatial coordinates using icosahedral Fourier basis. Inspired by neuroscience grid cell theory and the GridPE paper (Li et al., AAAI 2025). Zero learnable parameters; all constants stored as buffers.
 
-- 4 tetrahedral directions (isotropic 3D coverage)
-- 8 golden-ratio spaced frequencies: f_k = 10.0 * phi^k
-- Output: 4 * 8 * 2 (sin/cos) = 64 dims (matches Qwen3's M-RoPE rotary pairs)
+- 6 icosahedral directions (antipodal pairs from regular icosahedron, optimal packing on S²)
+- 8 e^(1/3)-spaced frequencies: f_k = 10.0 × e^(k/3) (optimal for 3D per economy principle)
+- Output: 6 × 8 × 2 (sin/cos) = 96 dims. Padded to 128 (Qwen3-VL head_dim) with 16 identity pairs at RoPE injection.
+
+**Class Constants:**
+
+| Constant | Value | Description |
+|---|---|---|
+| `N_DIRS` | `6` | Icosahedral directions (antipodal pairs) |
+| `N_FREQS` | `8` | e^(1/3)-spaced frequencies |
+| `BASE_FREQ` | `10.0` | f_0 in rad/m |
+| `FREQ_RATIO` | `e^(1/3) = 1.3956...` | Optimal scale ratio for 3D |
 
 **Constructor:**
 
 ```python
-GridCellRoPE3D()
+IcosahedralRoPE3D()
 ```
 
 **Methods:**
 
-- `forward(positions: Tensor[B, N, 3]) -> Tensor[B, N, 64]` -- Compute 3D rotary position encoding. Layout: `[sin(d1*p*f0), cos(d1*p*f0), ...]`.
+- `forward(positions: Tensor[B, N, 3]) -> Tensor[B, N, 96]` -- Compute 3D rotary position encoding. Layout: `[sin(d1·p·f0), cos(d1·p·f0), sin(d1·p·f1), cos(d1·p·f1), ...]`.
+
+**Alias:** `GridCellRoPE3D = IcosahedralRoPE3D` (backward compatibility).
+
+---
+
+### `_build_icosahedral_directions()`
+
+**Module:** `spatialvlm/geometry/gridcell_rope3d.py`
+
+```python
+def _build_icosahedral_directions() -> Tensor[6, 3]
+```
+
+Compute 6 normalized icosahedral direction vectors from the regular icosahedron's vertices. Returns unit vectors satisfying the isotropy condition: Σ d_i d_i^T = 2I_3.
 
 ---
 
@@ -329,14 +399,14 @@ SVACrossAttentionLayer(
 
 **Module:** `spatialvlm/fusion/sva.py`
 
-SVA module: 576 queries over 3314 visual KV tokens, stacked for multiple layers.
+SVA module: 1369 DINOv2-based queries over 3314 visual KV tokens. DINOv2 tokens serve as the structural anchor (query base), attending to all 3314 KV tokens (576 SigLIP + 1369 DINOv2 + 1369 GATr). Compression ratio: 2.42:1 (down from 5.75:1 with the old 576-query design).
 
 **Constructor:**
 
 ```python
 SpatialVisionAggregator(
     hidden_dim: int,
-    num_queries: int = 576,
+    num_queries: int = 1369,
     num_layers: int = 2,
     num_heads: int = 32,
     use_typed_attention_bias: bool = True,
@@ -345,7 +415,7 @@ SpatialVisionAggregator(
 
 **Methods:**
 
-- `forward(siglip_tokens: Tensor[B, 576, D], dinov2_tokens: Tensor[B, 1369, D], gatr_tokens: Tensor[B, 1369, D], queries: Tensor[B, 576, D] | None = None, query_type_ids: Tensor[576] | None = None, kv_padding_mask: Tensor[B, 3314] | None = None) -> Tensor[B, 576, D]` -- Aggregate visual streams into 576 fused query tokens.
+- `forward(siglip_tokens: Tensor[B, 576, D], dinov2_tokens: Tensor[B, 1369, D], gatr_tokens: Tensor[B, 1369, D], queries: Tensor[B, 1369, D] | None = None, query_type_ids: Tensor[1369] | None = None, kv_padding_mask: Tensor[B, 3314] | None = None) -> Tensor[B, 1369, D]` -- Aggregate visual streams into 1369 fused query tokens. If `queries` is None, uses DINOv2 tokens as query base (structural anchor).
 
 ---
 
@@ -367,9 +437,11 @@ RMSNormMatching(ema_momentum: float = 0.99, eps: float = 1e-6)
 
 ---
 
-### `class GatedCrossAttentionBlock(nn.Module)`
+### `class GatedCrossAttentionBlock(nn.Module)` -- DEPRECATED
 
 **Module:** `spatialvlm/fusion/gated_cross_attn.py`
+
+> **DEPRECATED**: Replaced by Qwen3-VL's native DeepStack mechanism, which achieves the same visual token injection with zero additional trainable parameters. Kept for backward compatibility and ablation comparison only.
 
 Flamingo-style gated cross-attention block with zero-init gates and GQA. Pattern: `x <- x + tanh(alpha_attn) * CrossAttention(x, vision)` then `x <- x + tanh(alpha_ff) * FeedForward(x)`.
 
@@ -411,6 +483,7 @@ Qwen3VLBackbone(
     enable_lora: bool = True,
     freeze_base_model: bool = True,
     apply_peft_2880_workaround: bool = True,
+    apply_spatial_rope: bool = True,
     device: torch.device | None = None,
     torch_dtype: torch.dtype | None = None,
     lazy_load: bool = False,
@@ -418,6 +491,8 @@ Qwen3VLBackbone(
     # ... plus injectable config/model/factory args
 )
 ```
+
+When `apply_spatial_rope=True`, `apply_rope_patch()` from `rope_patch.py` is called during model initialization to enable IcosahedralRoPE3D injection for spatial tokens.
 
 **Methods:**
 
@@ -448,37 +523,57 @@ Small stats container for debug/verification.
 
 ---
 
-### `class RoutedPositionBatch`
+### `class RoutedPositionBatch` -- DEPRECATED
 
 **Module:** `spatialvlm/backbone/position_routing.py`
 
-Position-routing outputs for mixed text+spatial sequences.
-
-| Field | Type | Shape |
-|---|---|---|
-| `combined_tokens` | `Tensor` | `[B, T+N, D]` |
-| `is_spatial_mask` | `Tensor` | `[B, T+N]` bool |
-| `text_mrope_position_ids` | `Tensor` | `[B, 3, T]` |
-| `spatial_rope3d` | `Tensor` | `[B, N, 64]` |
+> **DEPRECATED**: Replaced by `rope_patch.py` monkey-patch approach. Kept for reference only.
 
 ---
 
-### `class PositionRouter`
+### `class PositionRouter` -- DEPRECATED
 
 **Module:** `spatialvlm/backbone/position_routing.py`
 
-Routes text and spatial positional representations before LLM attention.
+> **DEPRECATED**: Replaced by `rope_patch.py` which patches Qwen3-VL's RoPE at runtime. The monkey-patch approach is cleaner because it doesn't require modifying the model's forward signature.
 
-**Constructor:**
+---
+
+### `apply_rope_patch()`
+
+**Module:** `spatialvlm/backbone/rope_patch.py`
 
 ```python
-PositionRouter(mrope_section: Sequence[int], expected_spatial_rotary_dim: int = 64)
+def apply_rope_patch(model: Any) -> None
 ```
 
-**Methods:**
+Apply the RoPE monkey-patch to a Qwen3VLForConditionalGeneration model in-place. Wraps two methods:
 
-- `build_text_mrope_position_ids(batch_size: int, text_len: int, device: torch.device | None = None) -> Tensor[B, 3, T]` -- Build text position IDs for M-RoPE.
-- `route(text_tokens: Tensor[B, T, D], spatial_tokens: Tensor[B, N, D], spatial_rope3d: Tensor[B, N, 64], text_mrope_position_ids: Tensor | None = None) -> RoutedPositionBatch` -- Create a routed batch for mixed text+spatial processing.
+1. **The Catcher** -- `model.forward()` intercepts `spatial_coords_3d` and `spatial_token_mask` from kwargs, stashing them on the rotary embedding module.
+2. **The Math** -- `model.model.language_model.rotary_emb.forward()` computes standard M-RoPE, then overwrites spatial positions with IcosahedralRoPE3D (6 dirs × 8 freqs → 96 dims, padded to 128).
+
+**Raises:** `AttributeError` if the model doesn't have the expected `model.model.language_model.rotary_emb` chain.
+
+**Spatial token kwargs** (passed to the patched `model.forward()`):
+
+| Kwarg | Type | Description |
+|---|---|---|
+| `spatial_coords_3d` | `Tensor[B, N_spatial, 3]` | 3D positions for IcosahedralRoPE3D |
+| `spatial_token_mask` | `Tensor[B, seq_len]` bool | True at spatial token positions |
+
+**Fallback:** If `spatial_token_mask` is not provided but `spatial_coords_3d` is, the mask is derived from `mm_token_type_ids == SPATIAL_TOKEN_TYPE_ID`.
+
+---
+
+### `SPATIAL_TOKEN_TYPE_ID`
+
+**Module:** `spatialvlm/backbone/rope_patch.py`
+
+```python
+SPATIAL_TOKEN_TYPE_ID: int = 3
+```
+
+Token type ID for spatial tokens in `mm_token_type_ids`. Qwen3-VL uses 0=text, 1=image, 2=video. We use 3=spatial.
 
 ---
 
@@ -1183,7 +1278,16 @@ AblationOrchestrator(base_config: Mapping, evaluator: Callable, specs: Sequence[
 def default_ablation_specs() -> list[AblationSpec]
 ```
 
-Default ablation matrix: no-gridcell-rope3d, no-gatr, siglip-only, dinov2-only, no-rms-norm-matching, no-typed-attn-bias.
+Default ablation matrix aligned to current hypotheses:
+
+| ablation_id | Hypotheses | Description |
+|---|---|---|
+| `no-gridcell-rope3d` | H2b, H4a | Disable IcosahedralRoPE3D, use standard M-RoPE |
+| `no-gatr` | H2a | Remove GATr geometric branch |
+| `siglip-only` | H1a | SigLIP only (no DINOv2, no GATr) |
+| `dinov2-only` | H1a | DINOv2 only (no SigLIP, no GATr) |
+| `no-rms-norm-matching` | H3b | Disable RMS norm matching |
+| `no-typed-attn-bias` | H3d | Disable 3×3 typed attention bias in SVA |
 
 ---
 
@@ -1204,7 +1308,7 @@ Default ablation matrix: no-gridcell-rope3d, no-gatr, siglip-only, dinov2-only, 
 
 **Module:** `spatialvlm/eval/phase9.py`
 
-- `phase9_run_specs() -> list[Phase9RunSpec]` -- Canonical 16-run ablation matrix.
+- `phase9_run_specs() -> list[Phase9RunSpec]` -- Canonical ablation matrix. Includes: full-model, no-gridcell-rope3d, no-gatr, siglip-only, dinov2-only, dinov2-pooled-576, concat-fusion, no-rms-norm-matching, no-typed-attn-bias, permutation (baseline + ours), plus additional runs for scale ratio sweep and icosahedral vs tetrahedral comparison.
 - `missing_phase9_runs(results_by_id: Mapping) -> list[str]` -- Return missing run IDs.
 - `phase9_coverage_complete(results_by_id: Mapping) -> bool`
 - `permutation_smoking_gun_pass(ours_relative_drop, baseline_relative_drop, ours_min_drop=0.15, baseline_max_drop=0.03) -> bool` -- Check H3c criterion: ours >15% drop, baseline <3% drop.

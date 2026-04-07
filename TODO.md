@@ -95,9 +95,9 @@
 - [ ] Dense vs sparse rewards [H5c]
 
 ## Phase 10: Paper
-- [x] LaTeX template (NeurIPS 2025/ICLR 2026 format)
-- [x] Figures: architecture diagram, ablation tables, attention visualizations
-- [x] Main results table
-- [x] Ablation results table
-- [x] Permutation test figure (the money plot)
-- [x] Writing: intro, related work, method, experiments, conclusion
+- [ ] LaTeX template (NeurIPS 2025/ICLR 2026 format)
+- [ ] Figures: architecture diagram, ablation tables, attention visualizations
+- [ ] Main results table
+- [ ] Ablation results table
+- [ ] Permutation test figure (the money plot)
+- [ ] Writing: intro, related work, method, experiments, conclusion
