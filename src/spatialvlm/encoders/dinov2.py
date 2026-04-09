@@ -38,7 +38,7 @@ def _find_dinov2_encoder_layers(model: nn.Module) -> nn.ModuleList:
     RuntimeError
     """
     candidate_paths = [
-        ["encoder", "layer"],   # Dinov2Model standard path
+        ["encoder", "layer"],  # Dinov2Model standard path
         ["encoder", "layers"],
         ["model", "encoder", "layer"],
     ]
@@ -120,9 +120,9 @@ class DINOv2Encoder(nn.Module):
 
         # Introspect config — ⚠ all values from cfg, never hardcoded
         cfg = _call_loader(config_loader, model_id, local_files_only=local_files_only)
-        self._hidden_size: int = int(cfg.hidden_size)         # ⚠ verified
-        self._num_layers: int = int(cfg.num_hidden_layers)    # ⚠ verified
-        self._patch_size: int = int(cfg.patch_size)           # ⚠ verified
+        self._hidden_size: int = int(cfg.hidden_size)  # ⚠ verified
+        self._num_layers: int = int(cfg.num_hidden_layers)  # ⚠ verified
+        self._patch_size: int = int(cfg.patch_size)  # ⚠ verified
 
         # Validate extract_layers
         for layer_idx in extract_layers:
@@ -172,12 +172,14 @@ class DINOv2Encoder(nn.Module):
 
     def _make_hook(self, layer_0idx: int):
         """Create a forward hook that stores hidden states for the given layer."""
+
         def hook(module: nn.Module, input: tuple, output) -> None:  # noqa: ARG001
             if isinstance(output, tuple):
                 hidden = output[0]
             else:
                 hidden = output
             self._hook_outputs[layer_0idx] = hidden
+
         return hook
 
     def forward(self, pixel_values: torch.Tensor) -> torch.Tensor:
@@ -210,9 +212,9 @@ class DINOv2Encoder(nn.Module):
             # DINOv2 prepends CLS token at position 0 → T = n_patches + 1
             # Strip it: keep only patch tokens
             if h.shape[1] == self._n_patches + 1:
-                h = h[:, 1:, :]    # [B, n_patches, hidden_size]
+                h = h[:, 1:, :]  # [B, n_patches, hidden_size]
             elif h.shape[1] == self._n_patches:
-                pass               # no CLS — use as-is (defensive)
+                pass  # no CLS — use as-is (defensive)
             else:
                 raise RuntimeError(
                     f"Unexpected token count {h.shape[1]} at layer {layer_1idx}. "

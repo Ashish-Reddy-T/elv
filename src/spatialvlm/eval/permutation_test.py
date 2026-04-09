@@ -86,7 +86,7 @@ def run_permutation_test(
     if not isinstance(tokens, torch.Tensor):
         raise TypeError(f"Batch `{token_key}` must be a torch.Tensor.")
 
-    generator = torch.Generator(device=tokens.device if tokens.is_cuda else "cpu")
+    generator = torch.Generator(device=tokens.device if tokens.is_cuda else torch.device("cpu"))
     generator.manual_seed(seed)
 
     baseline = _as_float_score(scoring_fn(batch))

@@ -1,11 +1,18 @@
 """Spatial Vision Aggregator (SVA) for Stage 3 fusion.
 
-SVA uses 576 query tokens that cross-attend to concatenated visual key/value tokens:
+SVA uses 1369 query tokens (DINOv2-based, 37x37 grid) that cross-attend to
+concatenated visual key/value tokens:
   - SigLIP tokens (semantic):   [B, 576, D]
   - DINOv2 tokens (structural): [B, 1369, D]
   - GATr tokens (geometric):    [B, 1369, D]
 
 Total KV tokens = 3314.
+
+DINOv2 as query base:
+  The structural encoder owns the spatial layout. Its 37x37 tokens form the
+  skeleton onto which SigLIP semantics and GATr geometry are fused via KV
+  cross-attention. This eliminates the 37x37 -> 24x24 compression bottleneck
+  of the previous 576-query design, giving 1:1 position-to-query mapping.
 
 Typed attention bias:
   Optional learned 3x3 matrix over token-source types:
@@ -128,7 +135,7 @@ class SVACrossAttentionLayer(nn.Module):
         elif padding_mask is not None:
             attn_mask = padding_mask
 
-        if q.device.type == "cuda" and attn_mask is not None:
+        if attn_mask is not None:
             q = q.contiguous()
             k = k.contiguous()
             v = v.contiguous()
@@ -143,12 +150,12 @@ class SVACrossAttentionLayer(nn.Module):
 
 
 class SpatialVisionAggregator(nn.Module):
-    """SVA module: 576 queries over 3314 visual KV tokens, stacked for multiple layers."""
+    """SVA module: 1369 DINOv2-based queries over 3314 visual KV tokens."""
 
     def __init__(
         self,
         hidden_dim: int,
-        num_queries: int = 576,
+        num_queries: int = 1369,
         num_layers: int = 2,
         num_heads: int = 32,
         use_typed_attention_bias: bool = True,
@@ -179,17 +186,17 @@ class SpatialVisionAggregator(nn.Module):
         query_type_ids: torch.Tensor | None = None,
         kv_padding_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        """Aggregate visual streams into 576 fused query tokens.
+        """Aggregate visual streams into 1369 fused query tokens.
 
         Parameters
         ----------
         siglip_tokens : Tensor[B, 576, D]
         dinov2_tokens : Tensor[B, 1369, D]
         gatr_tokens : Tensor[B, 1369, D]
-        queries : Tensor[B, 576, D] | None
-            If None, uses SigLIP tokens as query base.
-        query_type_ids : Tensor[576] | None
-            Type IDs in {0,1,2}. If None, all queries are type 0 (SigLIP).
+        queries : Tensor[B, 1369, D] | None
+            If None, uses DINOv2 tokens as query base (structural anchor).
+        query_type_ids : Tensor[1369] | None
+            Type IDs in {0,1,2}. If None, all queries are type 1 (DINOv2).
         kv_padding_mask : Tensor[B, 3314] | None
             True(valid)/False(masked).
         """
@@ -202,9 +209,9 @@ class SpatialVisionAggregator(nn.Module):
                 "All token streams must match hidden_dim. "
                 f"Got siglip={dim}, dino={dim_dino}, gatr={dim_gatr}, expected={self.hidden_dim}."
             )
-        if n_sig != self.num_queries:
+        if n_dino != self.num_queries:
             raise ValueError(
-                f"SigLIP token count must match num_queries={self.num_queries}, got {n_sig}."
+                f"DINOv2 token count must match num_queries={self.num_queries}, got {n_dino}."
             )
 
         kv_tokens = torch.cat([siglip_tokens, dinov2_tokens, gatr_tokens], dim=1)  # [B, 3314, D]
@@ -218,9 +225,8 @@ class SpatialVisionAggregator(nn.Module):
         )  # [3314]
 
         if query_type_ids is None:
-            query_type_ids = torch.zeros(
-                self.num_queries, dtype=torch.long, device=kv_tokens.device
-            )
+            # DINOv2-based queries get type 1 by default
+            query_type_ids = torch.ones(self.num_queries, dtype=torch.long, device=kv_tokens.device)
         if query_type_ids.shape != (self.num_queries,):
             raise ValueError(
                 "query_type_ids must be "
@@ -228,7 +234,7 @@ class SpatialVisionAggregator(nn.Module):
             )
 
         if queries is None:
-            queries = siglip_tokens  # [B, 576, D]
+            queries = dinov2_tokens  # [B, 1369, D] — structural anchor
         if queries.shape != (bsz, self.num_queries, self.hidden_dim):
             raise ValueError(
                 f"queries must be [B, {self.num_queries}, {self.hidden_dim}], got {queries.shape}."
@@ -244,6 +250,6 @@ class SpatialVisionAggregator(nn.Module):
                 query_type_ids=query_type_ids,
                 kv_type_ids=kv_type_ids,
                 kv_padding_mask=kv_padding_mask,
-            )  # [B, 576, D]
+            )  # [B, 1369, D]
 
-        return queries  # [B, 576, D]
+        return queries  # [B, 1369, D]

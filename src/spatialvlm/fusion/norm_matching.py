@@ -72,10 +72,9 @@ class RMSNormMatching(nn.Module):
             # Mean RMS over the batch
             batch_text_rms = text_rms_per_token.mean()  # scalar
 
-            # EMA update (detached — not a gradient path)
-            self.text_rms_ema = (
-                self.ema_momentum * self.text_rms_ema
-                + (1.0 - self.ema_momentum) * batch_text_rms.detach()
+            # EMA update (in-place to preserve registered buffer for state_dict/device)
+            self.text_rms_ema.mul_(self.ema_momentum).add_(
+                (1.0 - self.ema_momentum) * batch_text_rms.detach()
             )
 
         # RMS of the current vision tokens (mean over all tokens and batch)

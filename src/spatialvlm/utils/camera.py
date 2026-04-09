@@ -59,11 +59,11 @@ def make_pixel_grid(
     grid : Tensor[H, W, 2]
         Last dimension is (u, v) = (col, row), both 0-indexed.
     """
-    u = torch.arange(width, device=device, dtype=dtype)   # [W]
+    u = torch.arange(width, device=device, dtype=dtype)  # [W]
     v = torch.arange(height, device=device, dtype=dtype)  # [H]
     # indexing='xy': first arg varies along W (u), second arg along H (v)
-    uu, vv = torch.meshgrid(u, v, indexing="xy")           # both [H, W]
-    return torch.stack([uu, vv], dim=-1)                   # [H, W, 2]
+    uu, vv = torch.meshgrid(u, v, indexing="xy")  # both [H, W]
+    return torch.stack([uu, vv], dim=-1)  # [H, W, 2]
 
 
 def backproject_pixel(

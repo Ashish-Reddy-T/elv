@@ -84,6 +84,13 @@ class GATrWrapper(nn.Module):
         )
         self.to(device)
 
+        if not self.uses_improved_pga():
+            raise RuntimeError(
+                "GATr blocks do not use improved PGA (GeometricBilinear). "
+                "The basic PGA path is not expressive enough (see AISTATS 2024). "
+                "Ensure the installed GATr version includes join bilinear layers."
+            )
+
     @property
     def invariant_dim(self) -> int:
         """Invariant feature width: scalar channels + MV-channel norms."""
