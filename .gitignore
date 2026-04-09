@@ -38,6 +38,8 @@ Thumbs.db
 *.env.local
 
 # Repos
-REPOS/
+REPOS/*
+!REPOS/geometric-algebra-transformer/
+!REPOS/geometric-algebra-transformer/**
 notes/
 papers/
