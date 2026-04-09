@@ -81,7 +81,7 @@ class TestIcosahedralDirections:
         """
         dirs = rope3d.directions.float()  # [6, 3]
         # Outer product sum: [3, 3]
-        outer_sum = torch.einsum("nd,ne->de", dirs, dirs)   # [3, 3]
+        outer_sum = torch.einsum("nd,ne->de", dirs, dirs)  # [3, 3]
         expected = 2.0 * torch.eye(3)
         assert torch.allclose(outer_sum, expected, atol=1e-5), (
             f"Isotropy violation. Got:\n{outer_sum}\nExpected:\n{expected}"
@@ -109,9 +109,9 @@ class TestFrequencies:
 
     def test_base_frequency(self, rope3d):
         """First frequency should be BASE_FREQ = 10.0."""
-        assert torch.allclose(
-            rope3d.freqs[0], torch.tensor(10.0), atol=1e-5
-        ), f"Base freq expected 10.0, got {rope3d.freqs[0].item()}"
+        assert torch.allclose(rope3d.freqs[0], torch.tensor(10.0), atol=1e-5), (
+            f"Base freq expected 10.0, got {rope3d.freqs[0].item()}"
+        )
 
     def test_e_one_third_spacing(self, rope3d):
         """Consecutive frequencies should have ratio = e^(1/3) = 1.3956..."""
@@ -176,8 +176,8 @@ class TestEncoding:
 
     def test_output_layout_sin_cos_interleaved(self, rope3d):
         """Verify (sin, cos) interleaving at position p=(1,0,0)."""
-        pos = torch.tensor([[[1.0, 0.0, 0.0]]])   # [1, 1, 3]
-        out = rope3d(pos)                           # [1, 1, 96]
+        pos = torch.tensor([[[1.0, 0.0, 0.0]]])  # [1, 1, 3]
+        out = rope3d(pos)  # [1, 1, 96]
         enc = out[0, 0]  # [96]
 
         dirs = rope3d.directions.float()
@@ -196,7 +196,7 @@ class TestEncoding:
                 )
                 assert abs(float(enc[idx + 1]) - expected_cos) < 1e-5, (
                     f"cos mismatch at dir={di}, freq: expected {expected_cos:.6f}, "
-                    f"got {float(enc[idx+1]):.6f}"
+                    f"got {float(enc[idx + 1]):.6f}"
                 )
                 idx += 2
 

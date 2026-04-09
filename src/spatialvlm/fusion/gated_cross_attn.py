@@ -61,9 +61,9 @@ class GatedCrossAttentionBlock(nn.Module):
         self.kv_norm = nn.LayerNorm(hidden_dim)
 
         # Q/K/V/O projections (K and V use num_kv_heads, not num_heads)
-        self.q_proj = nn.Linear(hidden_dim, hidden_dim, bias=False)        # → num_heads * head_dim
-        self.k_proj = nn.Linear(hidden_dim, self.kv_dim, bias=False)       # → num_kv_heads * head_dim
-        self.v_proj = nn.Linear(hidden_dim, self.kv_dim, bias=False)       # → num_kv_heads * head_dim
+        self.q_proj = nn.Linear(hidden_dim, hidden_dim, bias=False)  # → num_heads * head_dim
+        self.k_proj = nn.Linear(hidden_dim, self.kv_dim, bias=False)  # → num_kv_heads * head_dim
+        self.v_proj = nn.Linear(hidden_dim, self.kv_dim, bias=False)  # → num_kv_heads * head_dim
         self.o_proj = nn.Linear(hidden_dim, hidden_dim, bias=False)
 
         self.attn_gate = nn.Parameter(torch.zeros(1))
@@ -95,10 +95,10 @@ class GatedCrossAttentionBlock(nn.Module):
         bsz, t_len, _ = text_tokens.shape
         _, n_vis, _ = vision_tokens.shape
 
-        q = self.q_proj(self.q_norm(text_tokens))    # [B, T, num_heads * head_dim]
+        q = self.q_proj(self.q_norm(text_tokens))  # [B, T, num_heads * head_dim]
         kv_in = self.kv_norm(vision_tokens)
-        k = self.k_proj(kv_in)                        # [B, N, num_kv_heads * head_dim]
-        v = self.v_proj(kv_in)                        # [B, N, num_kv_heads * head_dim]
+        k = self.k_proj(kv_in)  # [B, N, num_kv_heads * head_dim]
+        v = self.v_proj(kv_in)  # [B, N, num_kv_heads * head_dim]
 
         # Reshape for multi-head attention
         q = q.view(bsz, t_len, self.num_heads, self.head_dim).transpose(1, 2)
@@ -128,7 +128,9 @@ class GatedCrossAttentionBlock(nn.Module):
             )
 
         attn_out = functional.scaled_dot_product_attention(
-            q, k, v,
+            q,
+            k,
+            v,
             attn_mask=attn_mask,
             dropout_p=self.dropout if self.training else 0.0,
         )  # [B, num_heads, T, head_dim]

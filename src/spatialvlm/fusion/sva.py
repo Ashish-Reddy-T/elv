@@ -226,9 +226,7 @@ class SpatialVisionAggregator(nn.Module):
 
         if query_type_ids is None:
             # DINOv2-based queries get type 1 by default
-            query_type_ids = torch.ones(
-                self.num_queries, dtype=torch.long, device=kv_tokens.device
-            )
+            query_type_ids = torch.ones(self.num_queries, dtype=torch.long, device=kv_tokens.device)
         if query_type_ids.shape != (self.num_queries,):
             raise ValueError(
                 "query_type_ids must be "

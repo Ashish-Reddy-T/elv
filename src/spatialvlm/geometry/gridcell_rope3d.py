@@ -61,17 +61,20 @@ def _build_icosahedral_directions() -> torch.Tensor:
     norm = math.sqrt(1.0 + phi * phi)  # sqrt(1 + phi^2) = sqrt(3.618...)
 
     # 6 antipodal pairs from icosahedron vertices (one from each pair)
-    dirs = torch.tensor(
-        [
-            [0.0, +1.0, +phi],
-            [0.0, +1.0, -phi],
-            [+1.0, +phi, 0.0],
-            [+1.0, -phi, 0.0],
-            [+phi, 0.0, +1.0],
-            [+phi, 0.0, -1.0],
-        ],
-        dtype=torch.float32,
-    ) / norm  # [6, 3], each row is a unit vector
+    dirs = (
+        torch.tensor(
+            [
+                [0.0, +1.0, +phi],
+                [0.0, +1.0, -phi],
+                [+1.0, +phi, 0.0],
+                [+1.0, -phi, 0.0],
+                [+phi, 0.0, +1.0],
+                [+phi, 0.0, -1.0],
+            ],
+            dtype=torch.float32,
+        )
+        / norm
+    )  # [6, 3], each row is a unit vector
 
     return dirs
 
@@ -84,9 +87,9 @@ class IcosahedralRoPE3D(nn.Module):
     constants stored as buffers.
     """
 
-    N_DIRS: int = 6                 # icosahedral directions (antipodal pairs)
-    N_FREQS: int = 8                # e^(1/3)-spaced frequencies
-    BASE_FREQ: float = 10.0         # f_0 in rad/m
+    N_DIRS: int = 6  # icosahedral directions (antipodal pairs)
+    N_FREQS: int = 8  # e^(1/3)-spaced frequencies
+    BASE_FREQ: float = 10.0  # f_0 in rad/m
     FREQ_RATIO: float = math.exp(1.0 / 3.0)  # e^(1/3), optimal for 3D
 
     def __init__(self) -> None:
@@ -135,7 +138,7 @@ class IcosahedralRoPE3D(nn.Module):
         cos_enc = torch.cos(scaled)
 
         # Interleave: [B, N, 6, 8, 2] -> flatten last 3 dims -> [B, N, 96]
-        enc = torch.stack([sin_enc, cos_enc], dim=-1)   # [B, N, 6, 8, 2]
+        enc = torch.stack([sin_enc, cos_enc], dim=-1)  # [B, N, 6, 8, 2]
         enc = enc.reshape(*positions.shape[:2], self.N_DIRS * self.N_FREQS * 2)  # [B, N, 96]
 
         return enc

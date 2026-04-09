@@ -85,10 +85,10 @@ class TestBuildIcosahedralCosSin:
         cos, sin = _build_icosahedral_cos_sin(positions, head_dim=128, dtype=torch.float32)
         for i in range(3):
             cos_i, sin_i = _build_icosahedral_cos_sin(
-                positions[i:i+1], head_dim=128, dtype=torch.float32
+                positions[i : i + 1], head_dim=128, dtype=torch.float32
             )
-            assert torch.allclose(cos[i:i+1], cos_i, atol=1e-4)
-            assert torch.allclose(sin[i:i+1], sin_i, atol=1e-4)
+            assert torch.allclose(cos[i : i + 1], cos_i, atol=1e-4)
+            assert torch.allclose(sin[i : i + 1], sin_i, atol=1e-4)
 
 
 class TestIcosahedralRopeSingleton:
@@ -192,11 +192,13 @@ class TestConfigAlignment:
     def test_rope_dims_match_config(self):
         """IcosahedralRoPE3D output (96) should match config.rope3d_dims."""
         from spatialvlm.config.model import GeometryConfig
+
         cfg = GeometryConfig()
         assert cfg.rope3d_dims == 96
 
     def test_freq_ratio_is_e_one_third(self):
         """Config freq_ratio should be e^(1/3)."""
         from spatialvlm.config.model import GeometryConfig
+
         cfg = GeometryConfig()
         assert abs(cfg.freq_ratio - math.exp(1.0 / 3.0)) < 1e-10

@@ -118,9 +118,7 @@ class TestAggregatePatchesPercentile:
         # 75th percentile should pick a farther pixel (Z≈5.0)
         z_close = patches_15[0, 0, 2]
         z_far = patches_75[0, 0, 2]
-        assert z_close < z_far, (
-            f"0th-pct Z={z_close:.3f} should be < 75th-pct Z={z_far:.3f}"
-        )
+        assert z_close < z_far, f"0th-pct Z={z_close:.3f} should be < 75th-pct Z={z_far:.3f}"
 
     def test_percentile_rank_correctness(self):
         """Synthetic patch: verify the selected pixel matches expected rank."""
@@ -157,7 +155,9 @@ class TestPoolPositionsToSVAGrid:
     def test_output_shape_custom(self):
         """Custom grid sizes."""
         positions = torch.randn(1, 100, 3)
-        pooled = pool_positions_to_sva_grid(positions, source_h=10, source_w=10, target_h=5, target_w=5)
+        pooled = pool_positions_to_sva_grid(
+            positions, source_h=10, source_w=10, target_h=5, target_w=5
+        )
         assert pooled.shape == (1, 25, 3)
 
     def test_constant_positions_preserved(self):

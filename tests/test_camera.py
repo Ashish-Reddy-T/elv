@@ -43,8 +43,8 @@ class TestBackprojectPixel:
     def test_center_pixel_identity_intrinsics(self):
         """Center pixel with unit focal length → (0, 0, d)."""
         intrinsics = CameraIntrinsics(fx=1.0, fy=1.0, cx=4.0, cy=4.0, width=8, height=8)
-        u = torch.tensor(4.0)   # center col
-        v = torch.tensor(4.0)   # center row
+        u = torch.tensor(4.0)  # center col
+        v = torch.tensor(4.0)  # center row
         d = torch.tensor(5.0)
 
         pt = backproject_pixel(u, v, d, intrinsics)
@@ -59,11 +59,13 @@ class TestBackprojectPixel:
         d = torch.tensor(3.0)
 
         pt = backproject_pixel(u, v, d, intrinsics)
-        expected = torch.tensor([
-            (14.0 - 10.0) * 3.0 / 2.0,   # X = 6.0
-            (28.0 - 20.0) * 3.0 / 4.0,   # Y = 6.0
-            3.0,                           # Z = 3.0
-        ])
+        expected = torch.tensor(
+            [
+                (14.0 - 10.0) * 3.0 / 2.0,  # X = 6.0
+                (28.0 - 20.0) * 3.0 / 4.0,  # Y = 6.0
+                3.0,  # Z = 3.0
+            ]
+        )
         assert torch.allclose(pt, expected)
 
     def test_batch_shape(self):

@@ -95,9 +95,7 @@ class _DummySigLIPVisionModel(nn.Module):
         self._hidden_size = hidden_size
         self._n_tokens = n_tokens
         self.encoder = nn.Module()
-        self.encoder.layers = nn.ModuleList(
-            [_IdentityBlock() for _ in range(num_layers)]
-        )
+        self.encoder.layers = nn.ModuleList([_IdentityBlock() for _ in range(num_layers)])
         # Non-Linear patch_embedding so NaFlex detection returns False
         self.embeddings = nn.Module()
         self.embeddings.patch_embedding = nn.Conv2d(3, hidden_size, kernel_size=1)
@@ -228,6 +226,7 @@ class TestSigLIP2Encoder:
     @pytest.fixture(scope="class")
     def encoder(self):
         from spatialvlm.encoders.siglip import SigLIP2Encoder
+
         return SigLIP2Encoder(device=torch.device("cpu"))
 
     def test_output_shape(self, encoder):
@@ -291,6 +290,7 @@ class TestDINOv2Encoder:
     @pytest.fixture(scope="class")
     def encoder(self):
         from spatialvlm.encoders.dinov2 import DINOv2Encoder
+
         return DINOv2Encoder(device=torch.device("cpu"))
 
     def test_output_shape(self, encoder):
@@ -314,9 +314,7 @@ class TestDINOv2Encoder:
     def test_all_params_frozen(self, encoder):
         """Every parameter in the underlying DINOv2 model must be frozen."""
         for name, param in encoder._model.named_parameters():
-            assert not param.requires_grad, (
-                f"Parameter {name} should be frozen"
-            )
+            assert not param.requires_grad, f"Parameter {name} should be frozen"
 
     def test_cls_token_stripped(self, encoder):
         """DINOv2 prepends a CLS token — output must NOT include it."""
@@ -324,8 +322,7 @@ class TestDINOv2Encoder:
         out = encoder(x)
         # If CLS were included, shape[1] would be n_patches + 1 = 1370
         assert out.shape[1] == encoder.n_patches, (
-            f"CLS token not stripped: got {out.shape[1]} tokens, "
-            f"expected {encoder.n_patches}"
+            f"CLS token not stripped: got {out.shape[1]} tokens, expected {encoder.n_patches}"
         )
 
     def test_output_is_deterministic(self, encoder):

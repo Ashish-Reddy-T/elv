@@ -158,11 +158,11 @@ class SpatialVLM(nn.Module):
         dinov2_tokens : Tensor[B, 1369, 4096]
             Projected DINOv2 features.
         """
-        siglip_feats = self.siglip_encoder(siglip_pixels)    # [B, 576, 3456]
-        dinov2_feats = self.dinov2_encoder(dinov2_pixels)     # [B, 1369, 3072]
+        siglip_feats = self.siglip_encoder(siglip_pixels)  # [B, 576, 3456]
+        dinov2_feats = self.dinov2_encoder(dinov2_pixels)  # [B, 1369, 3072]
 
-        siglip_tokens = self.siglip_projector(siglip_feats)   # [B, 576, 4096]
-        dinov2_tokens = self.dinov2_projector(dinov2_feats)    # [B, 1369, 4096]
+        siglip_tokens = self.siglip_projector(siglip_feats)  # [B, 576, 4096]
+        dinov2_tokens = self.dinov2_projector(dinov2_feats)  # [B, 1369, 4096]
 
         return siglip_tokens, dinov2_tokens
 
@@ -274,9 +274,9 @@ class SpatialVLM(nn.Module):
         spatial_mask[:, spatial_start_idx:spatial_end_idx] = True
 
         return {
-            "spatial_coords_3d": positions_3d,            # for RoPE monkey-patch
-            "spatial_token_mask": spatial_mask,            # for RoPE monkey-patch
-            "deepstack_visual_embeds": fused_tokens,      # for DeepStack injection
+            "spatial_coords_3d": positions_3d,  # for RoPE monkey-patch
+            "spatial_token_mask": spatial_mask,  # for RoPE monkey-patch
+            "deepstack_visual_embeds": fused_tokens,  # for DeepStack injection
         }
 
     def forward(

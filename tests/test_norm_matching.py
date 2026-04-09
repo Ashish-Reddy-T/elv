@@ -55,8 +55,8 @@ class TestNormScaling:
         module.train()
 
         # Vision tokens with large norms (10× text)
-        vis = torch.randn(2, 576, 64) * 10.0   # RMS ≈ 10.0
-        txt = torch.randn(2, 64, 64) * 1.0     # RMS ≈ 1.0
+        vis = torch.randn(2, 576, 64) * 10.0  # RMS ≈ 10.0
+        txt = torch.randn(2, 64, 64) * 1.0  # RMS ≈ 1.0
 
         out = module(vis, text_tokens=txt)
 
@@ -92,7 +92,7 @@ class TestEMAUpdate:
         initial_ema = float(module.text_rms_ema)
 
         # Text tokens with high RMS
-        txt = torch.randn(2, 32, 64) * 5.0     # RMS ≈ 5.0
+        txt = torch.randn(2, 32, 64) * 5.0  # RMS ≈ 5.0
         vis = torch.randn(2, 10, 64)
         _ = module(vis, text_tokens=txt)
 

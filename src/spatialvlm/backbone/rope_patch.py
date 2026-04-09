@@ -226,12 +226,8 @@ def apply_rope_patch(model: Any) -> None:
 
     # Patch 1: RoPE forward (The Math)
     original_rope_forward = rotary_emb.forward
-    rotary_emb.forward = functools.partial(
-        patch_rope_forward, original_rope_forward, rotary_emb
-    )
+    rotary_emb.forward = functools.partial(patch_rope_forward, original_rope_forward, rotary_emb)
 
     # Patch 2: Model forward (The Catcher)
     original_model_forward = model.forward
-    model.forward = functools.partial(
-        patch_model_forward, original_model_forward, model
-    )
+    model.forward = functools.partial(patch_model_forward, original_model_forward, model)

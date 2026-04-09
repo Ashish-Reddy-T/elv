@@ -107,9 +107,9 @@ class TestBuildDeepstackInputs:
 
         # Verify mask is True only at spatial positions
         mask = kwargs["spatial_token_mask"]
-        assert mask[:, start_idx:start_idx + n_spatial].all()
+        assert mask[:, start_idx : start_idx + n_spatial].all()
         assert not mask[:, :start_idx].any()
-        assert not mask[:, start_idx + n_spatial:].any()
+        assert not mask[:, start_idx + n_spatial :].any()
 
     def test_spatial_mask_dtype(self):
         """Spatial token mask should be boolean."""

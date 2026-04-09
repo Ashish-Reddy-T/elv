@@ -37,8 +37,8 @@ def backproject_depth_map(
     # depth: [B, H, W]
     b, h, w = depth.shape
     grid = make_pixel_grid(w, h, device=depth.device, dtype=depth.dtype)  # [H, W, 2]
-    u = grid[..., 0].unsqueeze(0).expand(b, -1, -1)   # [B, H, W]
-    v = grid[..., 1].unsqueeze(0).expand(b, -1, -1)   # [B, H, W]
+    u = grid[..., 0].unsqueeze(0).expand(b, -1, -1)  # [B, H, W]
+    v = grid[..., 1].unsqueeze(0).expand(b, -1, -1)  # [B, H, W]
     return backproject_pixel(u, v, depth, intrinsics)  # [B, H, W, 3]
 
 
@@ -74,9 +74,9 @@ def aggregate_patches_percentile(
         For H=W=518, patch_size=14: n_patches = 37 * 37 = 1369.
     """
     b, h, w, _ = point_map.shape
-    ph = h // patch_size   # number of patches along height (37 for 518/14)
-    pw = w // patch_size   # number of patches along width  (37 for 518/14)
-    n = ph * pw            # total patches (1369 for 518×518 / 14)
+    ph = h // patch_size  # number of patches along height (37 for 518/14)
+    pw = w // patch_size  # number of patches along width  (37 for 518/14)
+    n = ph * pw  # total patches (1369 for 518×518 / 14)
     px = patch_size * patch_size  # pixels per patch (196 for 14×14)
 
     # Reshape point_map to [B, n_patches, pixels_per_patch, 3]

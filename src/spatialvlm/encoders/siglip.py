@@ -138,7 +138,7 @@ class SigLIP2Encoder(nn.Module):
         vision_cfg = getattr(cfg, "vision_config", cfg)
         self._hidden_size: int = int(vision_cfg.hidden_size)  # ⚠ verified from config
         self._num_layers: int = int(vision_cfg.num_hidden_layers)  # ⚠ verified from config
-        self._patch_size: int = int(vision_cfg.patch_size)         # ⚠ verified from config
+        self._patch_size: int = int(vision_cfg.patch_size)  # ⚠ verified from config
         self._image_size: int = int(getattr(vision_cfg, "image_size", 384))  # ⚠ verified
 
         # Validate extract_layers against actual model depth
@@ -198,9 +198,7 @@ class SigLIP2Encoder(nn.Module):
         except AttributeError:
             self._is_naflex = False
 
-    def _patchify(
-        self, pixel_values: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    def _patchify(self, pixel_values: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Convert raw images to NaFlex-compatible patchified format.
 
         Parameters
@@ -232,6 +230,7 @@ class SigLIP2Encoder(nn.Module):
 
     def _make_hook(self, layer_0idx: int):
         """Create a forward hook that stores hidden states for the given layer."""
+
         def hook(module: nn.Module, input: tuple, output) -> None:  # noqa: ARG001
             # Transformer blocks typically return (hidden_states,) or just hidden_states
             if isinstance(output, tuple):
@@ -239,6 +238,7 @@ class SigLIP2Encoder(nn.Module):
             else:
                 hidden = output
             self._hook_outputs[layer_0idx] = hidden
+
         return hook
 
     def forward(self, pixel_values: torch.Tensor) -> torch.Tensor:
@@ -269,8 +269,10 @@ class SigLIP2Encoder(nn.Module):
                 pv, spatial_shapes = self._patchify(pixel_values)
                 # All patches valid — no padding
                 attn_mask = torch.ones(
-                    pv.shape[0], pv.shape[1],
-                    device=pv.device, dtype=pv.dtype,
+                    pv.shape[0],
+                    pv.shape[1],
+                    device=pv.device,
+                    dtype=pv.dtype,
                 )  # [B, num_patches]
                 _ = vision_model(
                     pixel_values=pv,
@@ -292,10 +294,10 @@ class SigLIP2Encoder(nn.Module):
             n_tokens = h.shape[1]
             if n_tokens == self._n_patches + 1:
                 # CLS token at position 0 — strip it
-                h = h[:, 1:, :]   # [B, n_patches, hidden_size]
+                h = h[:, 1:, :]  # [B, n_patches, hidden_size]
             elif n_tokens > self._n_patches:
                 # NaFlex padding or extra tokens — truncate to n_patches
-                h = h[:, :self._n_patches, :]  # [B, n_patches, hidden_size]
+                h = h[:, : self._n_patches, :]  # [B, n_patches, hidden_size]
             elif n_tokens < self._n_patches:
                 raise RuntimeError(
                     f"Token count {n_tokens} at layer {layer_1idx} is less than "
