@@ -2,7 +2,6 @@
 # Copyright (c) 2024 Qualcomm Technologies, Inc.
 # All rights reserved.
 
-from typing import Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
@@ -35,8 +34,8 @@ class CompiledLinear(nn.Module):
         self,
         in_mv_channels: int,
         out_mv_channels: int,
-        in_s_channels: Optional[int] = None,
-        out_s_channels: Optional[int] = None,
+        in_s_channels: int | None = None,
+        out_s_channels: int | None = None,
         bias: bool = True,
     ) -> None:
         super().__init__()
@@ -48,8 +47,8 @@ class CompiledLinear(nn.Module):
         self._out_s_channels = out_s_channels
 
     def forward(
-        self, multivectors: torch.Tensor, scalars: Optional[torch.Tensor] = None
-    ) -> Tuple[torch.Tensor, Union[torch.Tensor, None]]:
+        self, multivectors: torch.Tensor, scalars: torch.Tensor | None = None
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
         """Compute compiled linear map.
 
         Parameters

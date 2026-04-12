@@ -2,11 +2,11 @@
 # All rights reserved.
 import pytest
 import torch
-
 from gatr.layers.attention.config import SelfAttentionConfig
 from gatr.layers.mlp.config import MLPConfig
 from gatr.nets import GATr
 from gatr.utils.misc import models_weights_are_close, seed_all
+
 from tests.helpers import BATCH_DIMS, MILD_TOLERANCES, check_pin_equivariance
 
 S_CHANNELS = [(None, None, 7, False), (4, 5, 6, True)]

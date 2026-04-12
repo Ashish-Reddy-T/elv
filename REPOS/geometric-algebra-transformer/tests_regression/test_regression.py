@@ -2,17 +2,16 @@
 # All rights reserved.
 """A regression test that tests regression."""
 
-
 import pytest
 import torch
 import torch_geometric
-from torch_geometric.data import Batch
-from tqdm import trange
-
 from gatr.layers.attention.config import SelfAttentionConfig
 from gatr.layers.mlp.config import MLPConfig
 from gatr.nets import GATr
 from gatr.utils.einsum import enable_cached_einsum
+from torch_geometric.data import Batch
+from tqdm import trange
+
 from tests_regression.regression_datasets.constants import BATCHSIZE, DEVICE, NUM_EPOCHS
 from tests_regression.regression_datasets.points_distance import (
     PointsDistanceDataset,

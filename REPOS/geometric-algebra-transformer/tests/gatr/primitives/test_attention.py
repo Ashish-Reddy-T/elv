@@ -2,11 +2,11 @@
 # All rights reserved.
 import pytest
 import torch
-from xformers.ops.fmha.attn_bias import BlockDiagonalMask
-
 from gatr.interface import embed_point, embed_scalar
 from gatr.primitives import geometric_attention, pga_attention, sdp_attention
 from gatr.primitives.attention import _lin_square_normalizer
+from xformers.ops.fmha.attn_bias import BlockDiagonalMask
+
 from tests.helpers import BATCH_DIMS, TOLERANCES, check_pin_equivariance
 
 

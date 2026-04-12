@@ -10,6 +10,8 @@ import torch
 import torch.nn.functional as functional
 from torch.nn.utils import clip_grad_norm_
 
+from spatialvlm.training.sft import set_trainable_by_groups
+
 
 @dataclass(frozen=True)
 class PrealignConfig:
@@ -20,6 +22,10 @@ class PrealignConfig:
     max_grad_norm: float = 1.0
     ignore_index: int = -100
     projector_keywords: tuple[str, ...] = ("projector",)
+    # When non-None, `trainable_groups` overrides `projector_keywords` and
+    # the trainer uses `set_trainable_by_groups`. Stored as a tuple so the
+    # dataclass stays hashable/frozen.
+    trainable_groups: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -90,16 +96,20 @@ class PrealignmentTrainer:
         self.model = model
         self.config = config
 
-        freeze_all_parameters(self.model)
-        self.trainable_parameter_names = unfreeze_parameters_by_keyword(
-            self.model,
-            config.projector_keywords,
-        )
-        if len(self.trainable_parameter_names) == 0:
-            raise ValueError(
-                "No trainable parameters found for pre-alignment. "
-                f"Keywords={config.projector_keywords}"
+        if config.trainable_groups is not None:
+            self.trainable_parameter_names = set_trainable_by_groups(
+                self.model, config.trainable_groups
             )
+            selection_detail = f"groups={tuple(config.trainable_groups)}"
+        else:
+            freeze_all_parameters(self.model)
+            self.trainable_parameter_names = unfreeze_parameters_by_keyword(
+                self.model,
+                config.projector_keywords,
+            )
+            selection_detail = f"keywords={config.projector_keywords}"
+        if len(self.trainable_parameter_names) == 0:
+            raise ValueError(f"No trainable parameters found for pre-alignment. {selection_detail}")
 
         if optimizer is None:
             trainable = [p for p in self.model.parameters() if p.requires_grad]

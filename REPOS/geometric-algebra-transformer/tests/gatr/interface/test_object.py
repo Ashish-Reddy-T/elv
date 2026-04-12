@@ -3,14 +3,14 @@
 import numpy as np
 import pytest
 import torch
-from scipy.stats import ortho_group
-
 from gatr.interface import (
     embed_3d_object,
     embed_3d_object_two_vec,
     extract_3d_object,
     extract_3d_object_two_vec,
 )
+from scipy.stats import ortho_group
+
 from tests.helpers import BATCH_DIMS, TOLERANCES
 
 

@@ -2,9 +2,8 @@
 # All rights reserved.
 import pytest
 import torch
-from torch import Tensor
-
 from gatr.utils.misc import minimum_autocast_precision
+from torch import Tensor
 
 
 # Choose dtypes to work on most devices -- torch.bfloat16 is not available on some GPUs

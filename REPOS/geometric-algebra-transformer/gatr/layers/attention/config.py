@@ -2,8 +2,9 @@
 # All rights reserved.
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional
+from typing import Any
 
 
 @dataclass
@@ -48,20 +49,20 @@ class SelfAttentionConfig:
     """
 
     multi_query: bool = True
-    in_mv_channels: Optional[int] = None
-    out_mv_channels: Optional[int] = None
-    in_s_channels: Optional[int] = None
-    out_s_channels: Optional[int] = None
+    in_mv_channels: int | None = None
+    out_mv_channels: int | None = None
+    in_s_channels: int | None = None
+    out_s_channels: int | None = None
     num_heads: int = 8
     additional_qk_mv_channels: int = 0
     additional_qk_s_channels: int = 0
-    normalizer_eps: Optional[float] = 1e-3
+    normalizer_eps: float | None = 1e-3
     pos_encoding: bool = False
     pos_enc_base: int = 4096
     output_init: str = "default"
     checkpoint: bool = True
     increase_hidden_channels: int = 2
-    dropout_prob: Optional[float] = None
+    dropout_prob: float | None = None
 
     def __post_init__(self):
         """Type checking / conversion."""
@@ -69,7 +70,7 @@ class SelfAttentionConfig:
             self.dropout_prob = None
 
     @property
-    def hidden_mv_channels(self) -> Optional[int]:
+    def hidden_mv_channels(self) -> int | None:
         """Returns the number of hidden multivector channels."""
 
         if self.in_mv_channels is None:
@@ -78,7 +79,7 @@ class SelfAttentionConfig:
         return max(self.increase_hidden_channels * self.in_mv_channels // self.num_heads, 1)
 
     @property
-    def hidden_s_channels(self) -> Optional[int]:
+    def hidden_s_channels(self) -> int | None:
         """Returns the number of hidden scalar channels."""
 
         if self.in_s_channels is None:

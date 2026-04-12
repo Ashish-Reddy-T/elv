@@ -2,7 +2,6 @@
 # All rights reserved.
 import pytest
 import torch
-
 from gatr.interface import (
     embed_oriented_plane,
     embed_point,
@@ -17,6 +16,7 @@ from gatr.interface import (
     extract_scalar,
 )
 from gatr.primitives import geometric_product, grade_involute
+
 from tests.helpers import BATCH_DIMS, TOLERANCES
 
 

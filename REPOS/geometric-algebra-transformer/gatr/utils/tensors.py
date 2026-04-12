@@ -1,6 +1,5 @@
 # Copyright (c) 2023 Qualcomm Technologies, Inc.
 # All rights reserved.
-from typing import Union
 
 import torch
 from torch import Tensor
@@ -54,7 +53,7 @@ def block_stack(tensors, dim1, dim2):
     return torch.cat(padded_tensors, dim1)
 
 
-def construct_reference_multivector(reference: Union[Tensor, str], inputs: Tensor) -> Tensor:
+def construct_reference_multivector(reference: Tensor | str, inputs: Tensor) -> Tensor:
     """Constructs a reference vector for the equivariant join.
 
     Parameters

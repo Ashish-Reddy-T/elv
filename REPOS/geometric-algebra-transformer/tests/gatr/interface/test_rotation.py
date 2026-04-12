@@ -2,7 +2,6 @@
 # All rights reserved.
 import pytest
 import torch
-
 from gatr.interface import (
     embed_oriented_plane,
     embed_point,
@@ -18,6 +17,7 @@ from gatr.interface import (
 from gatr.primitives.bilinear import geometric_product
 from gatr.primitives.linear import reverse
 from gatr.utils.quaternions import quaternion_to_rotation_matrix, random_quaternion
+
 from tests.helpers import BATCH_DIMS, TOLERANCES
 
 

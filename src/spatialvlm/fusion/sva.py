@@ -75,6 +75,47 @@ class SVACrossAttentionLayer(nn.Module):
         typed_bias = self.typed_attention_bias[query_type_ids][:, kv_type_ids]  # [Nq, Nk]
         return typed_bias.unsqueeze(0).unsqueeze(0)  # [1, 1, Nq, Nk]
 
+    def _attention_with_stats(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        kv_type_ids: torch.Tensor,
+        attn_mask: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        """Unfused attention that exposes per-source-type attention mass.
+
+        Runs only on the diagnostic path (`return_attention_stats=True`).
+        Numerically equivalent to the fused `scaled_dot_product_attention`
+        call used on the default path.
+        """
+        # q: [B, H, Nq, Dh], k/v: [B, H, Nk, Dh]
+        scale = self.head_dim**-0.5
+        logits = torch.matmul(q, k.transpose(-2, -1)) * scale  # [B, H, Nq, Nk]
+        if attn_mask is not None:
+            logits = logits + attn_mask
+        weights = functional.softmax(logits, dim=-1)  # [B, H, Nq, Nk]
+        attn_out = torch.matmul(weights, v)  # [B, H, Nq, Dh]
+
+        stats: dict[str, torch.Tensor] = {}
+        for type_id, key in (
+            (0, "head_mean_to_siglip"),
+            (1, "head_mean_to_dino"),
+            (2, "head_mean_to_gatr"),
+        ):
+            type_mask = kv_type_ids == type_id  # [Nk]
+            if type_mask.any():
+                mass_per_query = weights[..., type_mask].sum(dim=-1)  # [B, H, Nq]
+                head_mean = mass_per_query.mean(dim=(0, 2))  # [H]
+            else:
+                head_mean = torch.zeros(self.num_heads, device=weights.device, dtype=weights.dtype)
+            stats[key] = head_mean.detach()
+
+        if self.typed_attention_bias is not None:
+            stats["typed_bias"] = self.typed_attention_bias.detach().clone()
+
+        return attn_out, stats
+
     def forward(
         self,
         queries: torch.Tensor,
@@ -82,7 +123,8 @@ class SVACrossAttentionLayer(nn.Module):
         query_type_ids: torch.Tensor,
         kv_type_ids: torch.Tensor,
         kv_padding_mask: torch.Tensor | None = None,
-    ) -> torch.Tensor:
+        return_attention_stats: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, dict[str, torch.Tensor]]:
         """Cross-attend queries over visual key/value tokens.
 
         Parameters
@@ -95,6 +137,10 @@ class SVACrossAttentionLayer(nn.Module):
             Integer token types in {0, 1, 2}.
         kv_padding_mask : Tensor[B, Nk] | None
             True = token valid, False = masked out.
+        return_attention_stats : bool
+            If True, also return a dict of per-head attention mass on each
+            source type (siglip/dino/gatr) + the typed bias snapshot. Uses
+            an unfused attention path and is intended for diagnostics only.
         """
         # queries: [B, Nq, D], kv_tokens: [B, Nk, D]
         residual = queries
@@ -135,18 +181,26 @@ class SVACrossAttentionLayer(nn.Module):
         elif padding_mask is not None:
             attn_mask = padding_mask
 
-        if attn_mask is not None:
-            q = q.contiguous()
-            k = k.contiguous()
-            v = v.contiguous()
+        stats: dict[str, torch.Tensor] | None = None
+        if return_attention_stats:
+            attn_out, stats = self._attention_with_stats(q, k, v, kv_type_ids, attn_mask)
+        else:
+            if attn_mask is not None:
+                q = q.contiguous()
+                k = k.contiguous()
+                v = v.contiguous()
+            attn_out = functional.scaled_dot_product_attention(
+                q, k, v, attn_mask=attn_mask, dropout_p=0.0
+            )  # [B, H, Nq, Dh]
 
-        attn_out = functional.scaled_dot_product_attention(
-            q, k, v, attn_mask=attn_mask, dropout_p=0.0
-        )  # [B, H, Nq, Dh]
         attn_out = attn_out.transpose(1, 2).contiguous().view(bsz, n_q, self.hidden_dim)  # [B,Nq,D]
         attn_out = self.o_proj(attn_out)  # [B, Nq, D]
 
-        return self.out_norm(residual + attn_out)  # [B, Nq, D]
+        out = self.out_norm(residual + attn_out)  # [B, Nq, D]
+        if return_attention_stats:
+            assert stats is not None
+            return out, stats
+        return out
 
 
 class SpatialVisionAggregator(nn.Module):
@@ -185,7 +239,8 @@ class SpatialVisionAggregator(nn.Module):
         queries: torch.Tensor | None = None,
         query_type_ids: torch.Tensor | None = None,
         kv_padding_mask: torch.Tensor | None = None,
-    ) -> torch.Tensor:
+        return_attention_stats: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, dict[str, dict[str, torch.Tensor]]]:
         """Aggregate visual streams into 1369 fused query tokens.
 
         Parameters
@@ -199,6 +254,10 @@ class SpatialVisionAggregator(nn.Module):
             Type IDs in {0,1,2}. If None, all queries are type 1 (DINOv2).
         kv_padding_mask : Tensor[B, 3314] | None
             True(valid)/False(masked).
+        return_attention_stats : bool
+            If True, also return a dict keyed by `layer_{i}` with per-layer
+            per-head attention mass on each source type. Diagnostic use only;
+            activates an unfused attention path.
         """
         # siglip_tokens: [B, Ns, D], dinov2_tokens: [B, Nd, D], gatr_tokens: [B, Ng, D]
         bsz, n_sig, dim = siglip_tokens.shape
@@ -243,13 +302,28 @@ class SpatialVisionAggregator(nn.Module):
             device=queries.device, dtype=queries.dtype
         )
 
-        for layer in self.layers:
-            queries = layer(
+        all_stats: dict[str, dict[str, torch.Tensor]] | None = (
+            {} if return_attention_stats else None
+        )
+        for layer_idx, layer in enumerate(self.layers):
+            layer_out = layer(
                 queries=queries,
                 kv_tokens=kv_tokens,
                 query_type_ids=query_type_ids,
                 kv_type_ids=kv_type_ids,
                 kv_padding_mask=kv_padding_mask,
-            )  # [B, 1369, D]
+                return_attention_stats=return_attention_stats,
+            )
+            if return_attention_stats:
+                assert isinstance(layer_out, tuple)
+                queries, layer_stats = layer_out
+                assert all_stats is not None
+                all_stats[f"layer_{layer_idx}"] = layer_stats
+            else:
+                assert isinstance(layer_out, torch.Tensor)
+                queries = layer_out  # [B, 1369, D]
 
+        if return_attention_stats:
+            assert all_stats is not None
+            return queries, all_stats
         return queries  # [B, 1369, D]

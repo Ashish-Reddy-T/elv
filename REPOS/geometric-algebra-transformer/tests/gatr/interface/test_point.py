@@ -3,8 +3,8 @@
 import numpy as np
 import pytest
 import torch
-
 from gatr.interface import embed_point, extract_point, extract_point_embedding_reg
+
 from tests.helpers import BATCH_DIMS, TOLERANCES
 
 

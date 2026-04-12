@@ -3,7 +3,6 @@
 # All rights reserved.
 
 import hydra
-
 from gatr.experiments.arteries.experiment import ArteryExperiment
 
 

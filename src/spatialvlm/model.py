@@ -29,7 +29,6 @@ import torch
 import torch.nn as nn
 
 from spatialvlm.backbone.qwen3_vl import Qwen3VLBackbone
-from spatialvlm.backbone.rope_patch import SPATIAL_TOKEN_TYPE_ID
 from spatialvlm.config.model import SpatialVLMConfig
 from spatialvlm.encoders.dinov2 import DINOv2Encoder
 from spatialvlm.encoders.projector import MLPProjector

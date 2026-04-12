@@ -3,7 +3,6 @@
 """Utility functions to test callables for equivariance with respect to Pin(3,0,1)."""
 
 import torch
-
 from gatr.utils.clifford import SlowRandomPinTransform
 
 

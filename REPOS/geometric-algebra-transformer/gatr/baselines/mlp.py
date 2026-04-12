@@ -1,6 +1,5 @@
 # Copyright (c) 2023 Qualcomm Technologies, Inc.
 # All rights reserved.
-from typing import List
 
 import numpy as np
 import torch
@@ -22,7 +21,7 @@ class MLP(nn.Module):
         self.in_shape = in_shape
         self.out_shape = out_shape
 
-        layers: List[nn.Module] = [nn.Linear(np.product(in_shape), hidden_channels)]
+        layers: list[nn.Module] = [nn.Linear(np.product(in_shape), hidden_channels)]
         for _ in range(hidden_layers - 1):
             layers.append(nn.GELU())
             layers.append(nn.Linear(hidden_channels, hidden_channels))

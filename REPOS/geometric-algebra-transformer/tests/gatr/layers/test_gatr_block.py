@@ -3,7 +3,6 @@
 # pylint: disable=redefined-outer-name
 import pytest
 import torch
-
 from gatr.layers.attention.config import SelfAttentionConfig
 from gatr.layers.gatr_block import GATrBlock
 from gatr.layers.linear import EquiLinear

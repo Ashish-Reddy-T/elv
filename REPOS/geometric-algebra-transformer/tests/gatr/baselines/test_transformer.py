@@ -2,8 +2,8 @@
 # All rights reserved.
 import pytest
 import torch
-
 from gatr.baselines.transformer import BaselineAxialTransformer, BaselineTransformer
+
 from tests.helpers import BATCH_DIMS
 
 

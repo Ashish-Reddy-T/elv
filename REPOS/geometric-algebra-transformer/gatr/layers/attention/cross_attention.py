@@ -2,8 +2,6 @@
 # All rights reserved.
 """Cross-attention layer."""
 
-from typing import Optional, Tuple
-
 import torch
 from einops import rearrange
 from torch import nn
@@ -33,7 +31,7 @@ class CrossAttention(nn.Module):
         self,
         config: SelfAttentionConfig,
         in_q_mv_channels: int,
-        in_q_s_channels: Optional[int] = None,
+        in_q_s_channels: int | None = None,
     ) -> None:
         super().__init__()
 
@@ -88,7 +86,7 @@ class CrossAttention(nn.Module):
         self.attention = GeometricAttention(config)
 
         # Dropout
-        self.dropout: Optional[nn.Module]
+        self.dropout: nn.Module | None
         if config.dropout_prob is not None:
             self.dropout = GradeDropout(config.dropout_prob)
         else:
@@ -98,10 +96,10 @@ class CrossAttention(nn.Module):
         self,
         multivectors_kv: torch.Tensor,
         multivectors_q: torch.Tensor,
-        scalars_kv: Optional[torch.Tensor] = None,
-        scalars_q: Optional[torch.Tensor] = None,
+        scalars_kv: torch.Tensor | None = None,
+        scalars_q: torch.Tensor | None = None,
         attention_mask=None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Compute cross attention.
 
         Parameters

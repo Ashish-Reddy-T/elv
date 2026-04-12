@@ -2,8 +2,6 @@
 # All rights reserved.
 """Equivariant dropout layer."""
 
-from typing import Tuple
-
 import torch
 from torch import nn
 
@@ -25,7 +23,7 @@ class GradeDropout(nn.Module):
 
     def forward(
         self, multivectors: torch.Tensor, scalars: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Forward pass. Applies dropout.
 
         Parameters

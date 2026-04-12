@@ -170,6 +170,44 @@ def build_dataset(
     raise ValueError(f"Unsupported dataset name: {name}")
 
 
+class CachedFrameDataset(Dataset):
+    """Load pre-rendered .pt frames from a directory.
+
+    Each ``.pt`` file is a dict with at minimum:
+        rgb:          Tensor[3, H, W]    float32, [0,1]
+        depth:        Tensor[H, W]       float32, metric metres
+        instruction:  str
+    Optional keys:
+        intrinsics:   dict  (fx, fy, cx, cy, width, height)
+        target:       str   (for SFT — reasoning + action)
+        episode_id:   str
+        source:       str   (r2r-ce, rxr-ce, sqa3d)
+    """
+
+    def __init__(
+        self,
+        frame_dir: str | Path,
+        limit: int | None = None,
+    ) -> None:
+        self.frame_dir = Path(frame_dir)
+        if not self.frame_dir.is_dir():
+            raise FileNotFoundError(f"Frame directory not found: {self.frame_dir}")
+        self._paths = sorted(self.frame_dir.glob("*.pt"))
+        if limit is not None:
+            self._paths = self._paths[:limit]
+
+    def __len__(self) -> int:
+        return len(self._paths)
+
+    def __getitem__(self, idx: int) -> dict[str, Any]:
+        import torch as _torch
+
+        data = _torch.load(self._paths[idx], map_location="cpu", weights_only=False)
+        if not isinstance(data, dict):
+            raise ValueError(f"Expected dict in {self._paths[idx]}, got {type(data)}")
+        return data
+
+
 def iter_instructions(dataset: Iterable[NavSample]) -> Iterable[str]:
     """Yield instruction strings from standardized samples."""
     for sample in dataset:

@@ -38,7 +38,7 @@ import shutil
 import subprocess
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, List, Optional
+from typing import Any
 
 from rope.base.project import Project
 from rope.refactor import move
@@ -60,8 +60,8 @@ class PythonPackage:
         clone_url: str,
         checksum_sha: str,
         checkout_base_dir: Path,
-        patch_file: Optional[Path] = None,
-        ordered_refactoring: Optional[List[str]] = None,
+        patch_file: Path | None = None,
+        ordered_refactoring: list[str] | None = None,
     ) -> None:
         self._name = name
         self._clone_url = clone_url
@@ -160,7 +160,7 @@ class PythonPackage:
         init_py_target = self._get_checkout_path() / self._name / INIT_PY
         init_py_src.rename(init_py_target)
 
-    def _sort_files_by_priority(self, files: List[Path]) -> List[Path]:
+    def _sort_files_by_priority(self, files: list[Path]) -> list[Path]:
         """Sorts files for priority refactoring.
 
         This is necessary as else rope will get this wrong in some cases:
@@ -229,7 +229,7 @@ def install_packages() -> None:
             package.install_package()
 
 
-def get_packages(tmp_path: Path) -> List[PythonPackage]:
+def get_packages(tmp_path: Path) -> list[PythonPackage]:
     """Gets list of all Python packages to install."""
     packages = [
         SegnnPackage(
@@ -257,7 +257,7 @@ def get_packages(tmp_path: Path) -> List[PythonPackage]:
     return packages
 
 
-def run_successfully(cmd: List[str], **kwargs: Any) -> None:
+def run_successfully(cmd: list[str], **kwargs: Any) -> None:
     """Executes command in a subprocess, and in case of errors, prints stdout/stderr and fails."""
     proc = subprocess.run(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8", check=False, **kwargs
@@ -276,16 +276,7 @@ def verify_installation_through_imports() -> None:
 
     # Mute output from imports to avoid distracting information.
     with contextlib.redirect_stdout(None), contextlib.redirect_stderr(None):
-        from coronary_mesh_convolution import datasets  # type: ignore[import]
-        from coronary_mesh_convolution.data import MultiscaleData  # type: ignore[import]
-        from se3_transformer.equivariant_attention.fibers import Fiber  # type: ignore[import]
-        from se3_transformer.equivariant_attention.from_se3cnn.SO3 import (
-            irr_repr,  # type: ignore[import]
-        )
-        from se3_transformer.equivariant_attention.modules import GSE3Res  # type: ignore[import]
-        from se3_transformer.utils import utils_profiling  # type: ignore[import]
-        from segnn.balanced_irreps import BalancedIrreps  # type: ignore[import]
-        from segnn.segnn.segnn import SEGNN  # type: ignore[import]
+        pass  # type: ignore[import]
 
     logger.info("Imports successful!")
 

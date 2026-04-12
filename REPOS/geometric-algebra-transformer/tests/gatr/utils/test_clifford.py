@@ -4,7 +4,6 @@
 
 import pytest
 import torch
-
 from gatr.utils.clifford import mv_list_to_tensor, tensor_to_mv_list
 
 

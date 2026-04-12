@@ -2,11 +2,11 @@
 # All rights reserved.
 import pytest
 import torch
-from xformers.ops.fmha.attn_bias import BlockDiagonalMask
-
 from gatr.layers import SelfAttention, SelfAttentionConfig
 from gatr.layers.attention.cross_attention import CrossAttention
 from gatr.utils.clifford import SlowRandomPinTransform
+from xformers.ops.fmha.attn_bias import BlockDiagonalMask
+
 from tests.helpers import BATCH_DIMS, TOLERANCES, check_pin_equivariance
 
 

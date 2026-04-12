@@ -2,8 +2,6 @@
 # All rights reserved.
 """Self-attention layers."""
 
-from typing import Optional, Tuple
-
 import torch
 from einops import rearrange
 from torch import nn
@@ -62,7 +60,7 @@ class SelfAttention(nn.Module):
         self.attention = GeometricAttention(config)
 
         # Dropout
-        self.dropout: Optional[nn.Module]
+        self.dropout: nn.Module | None
         if config.dropout_prob is not None:
             self.dropout = GradeDropout(config.dropout_prob)
         else:
@@ -71,11 +69,11 @@ class SelfAttention(nn.Module):
     def forward(
         self,
         multivectors: torch.Tensor,
-        additional_qk_features_mv: Optional[torch.Tensor] = None,
-        scalars: Optional[torch.Tensor] = None,
-        additional_qk_features_s: Optional[torch.Tensor] = None,
+        additional_qk_features_mv: torch.Tensor | None = None,
+        scalars: torch.Tensor | None = None,
+        additional_qk_features_s: torch.Tensor | None = None,
         attention_mask=None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Computes forward pass on inputs with shape `(..., items, channels, 16)`.
 
         The result is the following:

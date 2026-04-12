@@ -2,13 +2,26 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 import torch
 import torch.nn.functional as functional
 from torch.nn.utils import clip_grad_norm_
+
+# Named parameter-name substrings for each trainable group. Matched
+# case-insensitively against `model.named_parameters()` keys. The
+# substrings are anchored to the actual submodule names in
+# `spatialvlm/model.py::SpatialVLM.__init__` — rename both sides together.
+FREEZE_GROUP_PATTERNS: dict[str, tuple[str, ...]] = {
+    "siglip_proj": ("siglip_projector.",),
+    "dino_proj": ("dinov2_projector.",),
+    "gatr": ("gatr.",),
+    "sva": ("sva.",),
+    # `peft`-style adapters: lora_A.*, lora_B.* (plus generic "lora." paths).
+    "lora": ("lora",),
+}
 
 
 @dataclass(frozen=True)
@@ -27,6 +40,10 @@ class SFTConfig:
         "cross_attn",
         "lora",
     )
+    # When non-None, `trainable_groups` overrides `trainable_keywords` and
+    # the trainer uses `set_trainable_by_groups`. Stored as a sorted tuple
+    # so the dataclass stays hashable/frozen.
+    trainable_groups: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -86,6 +103,41 @@ def set_trainable_by_keyword(
     return touched
 
 
+def set_trainable_by_groups(
+    model: torch.nn.Module,
+    groups: Iterable[str],
+) -> list[str]:
+    """Freeze all parameters, then unfreeze those in the named groups.
+
+    Valid group names are the keys of `FREEZE_GROUP_PATTERNS`. Use this
+    helper to run schedules like GATr-first → DINO-second → all-combined
+    without touching the default training pipeline; pass the desired
+    group set on the trainer config.
+    """
+    groups_set = set(groups)
+    unknown = groups_set - set(FREEZE_GROUP_PATTERNS)
+    if unknown:
+        raise ValueError(
+            f"Unknown freeze group(s): {sorted(unknown)}. "
+            f"Valid groups: {sorted(FREEZE_GROUP_PATTERNS)}"
+        )
+
+    patterns: list[str] = []
+    for group in groups_set:
+        patterns.extend(p.lower() for p in FREEZE_GROUP_PATTERNS[group])
+
+    touched: list[str] = []
+    for p in model.parameters():
+        p.requires_grad_(False)
+
+    for name, p in model.named_parameters():
+        lowered = name.lower()
+        if any(pat in lowered for pat in patterns):
+            p.requires_grad_(True)
+            touched.append(name)
+    return touched
+
+
 class SFTTrainer:
     """Trainer for Stage-2 supervised fine-tuning."""
 
@@ -97,11 +149,16 @@ class SFTTrainer:
     ) -> None:
         self.model = model
         self.config = config
-        self.trainable_parameter_names = set_trainable_by_keyword(model, config.trainable_keywords)
-        if len(self.trainable_parameter_names) == 0:
-            raise ValueError(
-                f"No trainable parameters selected for SFT. Keywords={config.trainable_keywords}"
+        if config.trainable_groups is not None:
+            self.trainable_parameter_names = set_trainable_by_groups(model, config.trainable_groups)
+            selection_detail = f"groups={tuple(config.trainable_groups)}"
+        else:
+            self.trainable_parameter_names = set_trainable_by_keyword(
+                model, config.trainable_keywords
             )
+            selection_detail = f"keywords={config.trainable_keywords}"
+        if len(self.trainable_parameter_names) == 0:
+            raise ValueError(f"No trainable parameters selected for SFT. {selection_detail}")
 
         if optimizer is None:
             params = [p for p in model.parameters() if p.requires_grad]

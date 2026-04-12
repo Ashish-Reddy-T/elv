@@ -4,8 +4,8 @@
 
 import pytest
 import torch
-
 from gatr.primitives import equi_layer_norm, norm
+
 from tests.helpers import TOLERANCES, check_pin_equivariance
 
 

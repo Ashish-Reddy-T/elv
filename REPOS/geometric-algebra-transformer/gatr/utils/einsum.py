@@ -3,13 +3,14 @@
 """This module provides efficiency improvements over torch's einsum through caching."""
 
 import functools
-from typing import Any, Callable, List, Sequence
+from collections.abc import Callable, Sequence
+from typing import Any
 
 import opt_einsum
 import torch
 
 
-def _einsum_with_path(equation: str, *operands: torch.Tensor, path: List[int]) -> torch.Tensor:
+def _einsum_with_path(equation: str, *operands: torch.Tensor, path: list[int]) -> torch.Tensor:
     """Computes einsum with a given contraction path."""
 
     # Justification: For the sake of performance, we need direct access to torch's private methods.
@@ -39,10 +40,10 @@ def _cached_einsum(equation: str, *operands: torch.Tensor) -> torch.Tensor:
     return _einsum_with_path(equation, *operands, path=path)
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def _get_cached_path_for_equation_and_shapes(
     equation: str, op_shape: Sequence[torch.Tensor]
-) -> List[int]:
+) -> list[int]:
     """Provides shape-based caching of the optimal contraction path."""
     tupled_path = opt_einsum.contract_path(equation, *op_shape, optimize="optimal", shapes=True)[0]
 
@@ -79,7 +80,7 @@ def gatr_einsum(equation: str, *operands: torch.Tensor):
     return _gatr_einsum(equation, *operands)
 
 
-def gatr_einsum_with_path(equation: str, *operands: torch.Tensor, path: List[int]):
+def gatr_einsum_with_path(equation: str, *operands: torch.Tensor, path: list[int]):
     """Computes einsum with a given contraction path (which is ignored when using compilation).
 
     Cf. `enable_cached_einsum` for more context.

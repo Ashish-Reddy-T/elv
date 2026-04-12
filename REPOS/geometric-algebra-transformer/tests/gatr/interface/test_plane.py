@@ -2,8 +2,8 @@
 # All rights reserved.
 import pytest
 import torch
-
 from gatr.interface import embed_oriented_plane, extract_oriented_plane
+
 from tests.helpers import BATCH_DIMS, TOLERANCES
 
 

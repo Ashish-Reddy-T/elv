@@ -26,9 +26,7 @@ class BaseWrapper(nn.Module):
         self.scalars = scalars
         self.return_other = return_other
 
-    def build_attention_mask(
-        self, inputs, mv=None, s=None
-    ):  # pylint: disable=unused-argument,redundant-returns-doc
+    def build_attention_mask(self, inputs, mv=None, s=None):  # pylint: disable=unused-argument,redundant-returns-doc
         """Construct attention mask.
 
         Parameters

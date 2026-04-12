@@ -7,7 +7,6 @@ import time
 from collections import defaultdict
 from contextlib import nullcontext
 from pathlib import Path
-from typing import Dict, Optional
 
 import matplotlib
 import mlflow
@@ -56,14 +55,14 @@ class BaseExperiment:
         self.device, self.dtype = self._init_backend()
 
         # Initialize state
-        self.model: Optional[nn.Module] = None
+        self.model: nn.Module | None = None
         self.ema = None
         self.optim = None
         self.scheduler = None
 
         self.metrics = {}
         self._best_state = None
-        self._training_start_time: Optional[float] = None
+        self._training_start_time: float | None = None
 
         # Initialize folder and logger
         self._initialize_experiment_folder()
@@ -232,8 +231,8 @@ class BaseExperiment:
             and self._best_state["step"] < step
         ):
             logger.info(
-                f'Early stopping after step {self._best_state["step"]} '
-                f'with validation loss {self._best_state["loss"]}'
+                f"Early stopping after step {self._best_state['step']} "
+                f"with validation loss {self._best_state['loss']}"
             )
             self.model.load_state_dict(self._best_state["state_dict"])
         else:
@@ -479,7 +478,7 @@ class BaseExperiment:
     def _silence_the_lambs():
         """Silences other loggers."""
         for name, other_logger in logging.root.manager.loggerDict.items():
-            if not "gatr_experiment" in name:
+            if "gatr_experiment" not in name:
                 other_logger.level = logging.WARNING
 
     @staticmethod
@@ -673,7 +672,7 @@ class BaseExperiment:
         eval_device = torch.device(self.cfg.training.eval_device)
         self.model = self.model.to(eval_device)
 
-        aggregate_metrics: Dict[str, float] = defaultdict(float)
+        aggregate_metrics: dict[str, float] = defaultdict(float)
 
         # Loop over dataset and compute error
         for data in tqdm(dataloader, disable=False, desc="Evaluating"):

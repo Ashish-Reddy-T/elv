@@ -1,12 +1,10 @@
 # Copyright (c) 2023 Qualcomm Technologies, Inc.
 # All rights reserved.
-from typing import Iterator, Tuple
+from collections.abc import Iterator
 
 import opt_einsum
 import pytest
 import torch
-from torch.backends import opt_einsum as opt_einsum_torch
-
 from gatr.utils import einsum
 from gatr.utils.einsum import (
     _cached_einsum,
@@ -15,6 +13,7 @@ from gatr.utils.einsum import (
     _get_cached_path_for_equation_and_shapes,
     enable_cached_einsum,
 )
+from torch.backends import opt_einsum as opt_einsum_torch
 
 _DIM = 5
 
@@ -35,7 +34,7 @@ def einsum_eq_fixture() -> str:
 
 
 @pytest.fixture(name="example_operands")
-def example_operands_fixture() -> Tuple[torch.Tensor, ...]:
+def example_operands_fixture() -> tuple[torch.Tensor, ...]:
     """Provides tensors for a non-trivial einsum equation."""
     # Example tensors from https://optimized-einsum.readthedocs.io/en/stable/index.html
     I = torch.rand(_DIM, _DIM, _DIM, _DIM)
@@ -62,7 +61,7 @@ def test_opt_einsum_shape() -> None:
     )
 
 
-def test_e2e_cached_path(einsum_eq: str, example_operands: Tuple[torch.Tensor]) -> None:
+def test_e2e_cached_path(einsum_eq: str, example_operands: tuple[torch.Tensor]) -> None:
     """Checks that torch.einsum and cached_einsum deliver the same results."""
     # pylint: disable=protected-access
     # WHEN we call cached einsum, remembering the the cache sizes

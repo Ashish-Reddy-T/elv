@@ -1,7 +1,6 @@
 # Copyright (c) 2023 Qualcomm Technologies, Inc.
 # All rights reserved.
 from itertools import product
-from typing import Tuple
 
 import torch
 
@@ -17,7 +16,7 @@ _USE_EFFICIENT_JOIN = True
 @torch.no_grad()
 def _compute_dualization(
     device=torch.device("cpu"), dtype=torch.float32
-) -> Tuple[torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Constructs a tensor for the dual operation.
 
     Parameters
@@ -68,8 +67,9 @@ def _compute_efficient_join(device=torch.device("cpu"), dtype=torch.float32) -> 
 
     for i in range(16):
         for j in range(16):
-            x, y = torch.zeros(16, dtype=dtype, device=device), torch.zeros(
-                16, dtype=dtype, device=device
+            x, y = (
+                torch.zeros(16, dtype=dtype, device=device),
+                torch.zeros(16, dtype=dtype, device=device),
             )
             x[i] = 1.0
             y[j] = 1.0
@@ -80,7 +80,7 @@ def _compute_efficient_join(device=torch.device("cpu"), dtype=torch.float32) -> 
 
 @gatr_cache
 @torch.no_grad()
-def _compute_join_norm_idx(threshold=0.5) -> Tuple[list, list, list]:
+def _compute_join_norm_idx(threshold=0.5) -> tuple[list, list, list]:
     """Constructs everything we need to compute norm(equi_norm(x,y)) in a memory-efficient way.
 
     Parameters

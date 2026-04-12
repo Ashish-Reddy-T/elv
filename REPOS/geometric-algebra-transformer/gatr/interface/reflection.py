@@ -2,7 +2,6 @@
 # All rights reserved.
 """Functions that create multivectors representing elements of the Pin group."""
 
-
 from torch import Tensor
 
 from gatr.interface.plane import embed_oriented_plane, extract_oriented_plane

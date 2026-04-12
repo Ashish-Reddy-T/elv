@@ -4,8 +4,8 @@
 
 import pytest
 import torch
-
 from gatr.primitives import inner_product, norm, pin_invariants
+
 from tests.helpers import BATCH_DIMS, TOLERANCES, check_pin_invariance
 
 

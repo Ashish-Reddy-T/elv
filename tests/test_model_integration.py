@@ -8,12 +8,10 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
 import torch
 
 from spatialvlm.config.model import SpatialVLMConfig
 from spatialvlm.model import SpatialVLM
-from spatialvlm.utils.camera import CameraIntrinsics
 
 
 class TestSpatialVLMInit:

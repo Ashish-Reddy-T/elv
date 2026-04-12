@@ -19,7 +19,13 @@ training:
     - projector
 
 data:
-  dataset: llava-558k
+  # Habitat-rendered frames with GT depth (NOT LLaVA-558K — no depth available).
+  # Pre-render with scripts/render_training_frames.py before training.
+  dataset: habitat-frames
+  frame_dir: data/frames/prealign/
+  datasets:
+    - r2r-ce
+    - rxr-ce
   split: train
   max_samples: 50000
   num_workers: 8

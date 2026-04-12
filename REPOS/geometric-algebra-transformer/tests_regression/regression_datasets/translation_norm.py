@@ -1,9 +1,9 @@
 # Copyright (c) 2023 Qualcomm Technologies, Inc.
 # All rights reserved.
 import torch
-
 from gatr.experiments.base_wrapper import BaseWrapper
 from gatr.interface import embed_point, embed_translation, extract_scalar
+
 from tests_regression.regression_datasets.constants import DATASET_SIZE, DEVICE
 
 

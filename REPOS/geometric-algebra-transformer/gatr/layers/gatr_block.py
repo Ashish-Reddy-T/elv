@@ -1,7 +1,8 @@
 # Copyright (c) 2024 Qualcomm Technologies, Inc.
 # All rights reserved.
+from collections.abc import Sequence
 from dataclasses import replace
-from typing import Literal, Optional, Sequence, Tuple, Union
+from typing import Literal
 
 import torch
 from torch import nn
@@ -46,8 +47,8 @@ class GATrBlock(nn.Module):
         s_channels: int,
         attention: SelfAttentionConfig,
         mlp: MLPConfig,
-        dropout_prob: Optional[float] = None,
-        checkpoint: Optional[Sequence[Literal["mlp", "attention"]]] = None,
+        dropout_prob: float | None = None,
+        checkpoint: Sequence[Literal["mlp", "attention"]] | None = None,
     ) -> None:
         super().__init__()
 
@@ -87,11 +88,11 @@ class GATrBlock(nn.Module):
         self,
         multivectors: torch.Tensor,
         scalars: torch.Tensor,
-        reference_mv: Optional[torch.Tensor] = None,
-        additional_qk_features_mv: Optional[torch.Tensor] = None,
-        additional_qk_features_s: Optional[torch.Tensor] = None,
-        attention_mask: Optional[Union[AttentionBias, torch.Tensor]] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        reference_mv: torch.Tensor | None = None,
+        additional_qk_features_mv: torch.Tensor | None = None,
+        additional_qk_features_s: torch.Tensor | None = None,
+        attention_mask: AttentionBias | torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Forward pass of the transformer block.
 
         Inputs are first processed by a block consisting of LayerNorm, multi-head geometric
@@ -158,10 +159,10 @@ class GATrBlock(nn.Module):
         self,
         multivectors: torch.Tensor,
         scalars: torch.Tensor,
-        additional_qk_features_mv: Optional[torch.Tensor] = None,
-        additional_qk_features_s: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        additional_qk_features_mv: torch.Tensor | None = None,
+        additional_qk_features_s: torch.Tensor | None = None,
+        attention_mask: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Attention block."""
 
         h_mv, h_s = self.norm(multivectors, scalars=scalars)
@@ -178,8 +179,8 @@ class GATrBlock(nn.Module):
         self,
         multivectors: torch.Tensor,
         scalars: torch.Tensor,
-        reference_mv: Optional[torch.Tensor] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        reference_mv: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """MLP block."""
 
         h_mv, h_s = self.norm(multivectors, scalars=scalars)

@@ -20,10 +20,16 @@ training:
     - projector
     - gatr
     - sva
-    - cross_attn
     - lora
+  # cross_attn removed — gated cross-attention replaced by DeepStack (0 params)
+  # Optional: staged training via freeze groups
+  # trainable_groups: [gatr, sva]        # Phase 1: geometry + fusion only
+  # trainable_groups: [gatr, sva, dino_proj]  # Phase 2: add DINOv2 projector
+  # trainable_groups: null               # Phase 3: all keywords (default)
 
 data:
+  dataset: habitat-frames
+  frame_dir: data/frames/sft/
   datasets:
     - r2r-ce
     - rxr-ce

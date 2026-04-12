@@ -2,7 +2,6 @@
 # All rights reserved.
 import pytest
 import torch
-
 from gatr.interface import (
     embed_oriented_plane,
     embed_point,
@@ -18,6 +17,7 @@ from gatr.interface import (
 )
 from gatr.primitives import geometric_product, reverse
 from gatr.utils.warning import GATrDeprecationWarning
+
 from tests.helpers import BATCH_DIMS, TOLERANCES
 
 
@@ -82,7 +82,8 @@ def test_translation_on_plane(batch_dims):
     # Compute translation in multivector space with sandwich product
     translated_plane_sandwich = geometric_product(translations_embedding, plane_embedding)
     translated_plane_sandwich = geometric_product(
-        translated_plane_sandwich, inv_translations_embedding  # ensure deprecationwarning raised
+        translated_plane_sandwich,
+        inv_translations_embedding,  # ensure deprecationwarning raised
     )
     translated_normals = extract_oriented_plane(translated_plane_sandwich)
 
