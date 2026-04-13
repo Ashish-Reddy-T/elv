@@ -183,6 +183,42 @@ def _deepstack_embedding_hook(
     return output
 
 
+def stash_spatial_forward_kwargs(model_self: Any, kwargs: dict[str, Any]) -> None:
+    """Pop SpatialVLM-only kwargs and stash for RoPE / DeepStack hooks.
+
+    Qwen3VLModel.forward passes ``deepstack_visual_embeds=<local>`` and ``**kwargs``
+    into the text stack; if ``kwargs`` still contains ``deepstack_visual_embeds``,
+    Python raises "multiple values for keyword argument". Call this on the outer
+    Peft / HF model **before** any forward so those keys never reach Qwen3VLModel.
+
+    Safe to call twice on the same ``kwargs`` dict (second call is a no-op).
+    """
+    if not any(
+        k in kwargs for k in ("spatial_coords_3d", "spatial_token_mask", "deepstack_visual_embeds")
+    ):
+        return
+
+    spatial_coords_3d = kwargs.pop("spatial_coords_3d", None)
+    spatial_token_mask = kwargs.pop("spatial_token_mask", None)
+    deepstack_visual_embeds = kwargs.pop("deepstack_visual_embeds", None)
+
+    if spatial_token_mask is None and spatial_coords_3d is not None:
+        mm_token_type_ids = kwargs.get("mm_token_type_ids", None)
+        if mm_token_type_ids is not None:
+            spatial_token_mask = mm_token_type_ids == SPATIAL_TOKEN_TYPE_ID
+
+    try:
+        rotary_emb = model_self.model.language_model.rotary_emb
+        rotary_emb._spatial_coords_3d = spatial_coords_3d
+        rotary_emb._spatial_token_mask = spatial_token_mask
+        if deepstack_visual_embeds is not None and spatial_token_mask is not None:
+            embed_module = _find_embed_tokens(model_self)
+            embed_module._deepstack_visual_embeds = deepstack_visual_embeds
+            embed_module._deepstack_spatial_mask = spatial_token_mask
+    except AttributeError:
+        pass
+
+
 def patch_model_forward(
     original_forward: Any,
     model_self: Any,
@@ -195,29 +231,7 @@ def patch_model_forward(
     from kwargs.  Stashes RoPE data on the rotary embedding module and visual
     embeddings on the word-embedding module (consumed by a registered hook).
     """
-    # Extract our custom kwargs (not part of Qwen3-VL's signature)
-    spatial_coords_3d = kwargs.pop("spatial_coords_3d", None)
-    spatial_token_mask = kwargs.pop("spatial_token_mask", None)
-    deepstack_visual_embeds = kwargs.pop("deepstack_visual_embeds", None)
-
-    # Fallback: derive spatial_token_mask from mm_token_type_ids if not provided
-    if spatial_token_mask is None and spatial_coords_3d is not None:
-        mm_token_type_ids = kwargs.get("mm_token_type_ids", None)
-        if mm_token_type_ids is not None:
-            spatial_token_mask = mm_token_type_ids == SPATIAL_TOKEN_TYPE_ID
-
-    # Stash on the rotary embedding module for the RoPE patch to consume
-    rotary_emb = model_self.model.language_model.rotary_emb
-    rotary_emb._spatial_coords_3d = spatial_coords_3d
-    rotary_emb._spatial_token_mask = spatial_token_mask
-
-    # Stash visual embeddings on the word-embedding module for the hook
-    if deepstack_visual_embeds is not None and spatial_token_mask is not None:
-        embed_module = _find_embed_tokens(model_self)
-        embed_module._deepstack_visual_embeds = deepstack_visual_embeds
-        embed_module._deepstack_spatial_mask = spatial_token_mask
-
-    # Call original forward
+    stash_spatial_forward_kwargs(model_self, kwargs)
     return original_forward(*args, **kwargs)
 
 

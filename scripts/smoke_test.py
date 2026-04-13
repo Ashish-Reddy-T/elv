@@ -641,7 +641,7 @@ def main() -> int:
     info(f"Stages: {sorted(stages)}")
     if torch.cuda.is_available():
         info(f"GPU:    {torch.cuda.get_device_name(0)}")
-        info(f"VRAM:   {torch.cuda.get_device_properties(0).total_mem / 1e9:.1f} GB")
+        info(f"VRAM:   {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
     print()
 
     results: list[StageResult] = []

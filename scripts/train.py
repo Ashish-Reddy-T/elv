@@ -68,6 +68,23 @@ def _build_model(cfg: Any, device: torch.device, dtype: torch.dtype | None):
     return model
 
 
+def _maybe_enable_gradient_checkpointing(model: Any, cfg: Any) -> None:
+    """Enable HF gradient checkpointing on the PEFT-wrapped backbone when requested."""
+    training = getattr(cfg, "training", None)
+    if training is None or not training.get("gradient_checkpointing", False):
+        return
+    backbone = getattr(model, "backbone", None)
+    if backbone is None or getattr(backbone, "model", None) is None:
+        return
+    hf = backbone.model
+    try:
+        if hasattr(hf, "gradient_checkpointing_enable"):
+            hf.gradient_checkpointing_enable()
+            print("Gradient checkpointing: enabled on backbone.")
+    except (AttributeError, RuntimeError, ValueError) as exc:
+        print(f"Warning: could not enable gradient checkpointing: {exc}")
+
+
 def _build_trainer(cfg: Any, model: torch.nn.Module, stage: str):
     if stage == "prealign":
         from spatialvlm.training.prealign import PrealignConfig, PrealignmentTrainer
@@ -153,6 +170,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--checkpoint-dir", default="checkpoints", help="Checkpoint directory")
     p.add_argument("--resume", default=None, help="Resume from checkpoint .pt file")
     p.add_argument("--limit", type=int, default=None, help="Limit dataset size (for testing)")
+    p.add_argument(
+        "--batch-size",
+        type=int,
+        default=None,
+        help="Override config training.batch_size (use 1 if you hit CUDA OOM)",
+    )
     p.add_argument("--log-every", type=int, default=10, help="Log every N steps")
     p.add_argument("--save-every-epoch", action="store_true", help="Save checkpoint each epoch")
     return p.parse_args()
@@ -191,6 +214,7 @@ def main() -> int:
     print(f"Building model on {device} with dtype={dtype}")
     torch_dtype = dtype if dtype != torch.float32 else None
     model = _build_model(cfg, device, torch_dtype)
+    _maybe_enable_gradient_checkpointing(model, cfg)
 
     # Trainer (sets up freeze groups + optimizer)
     trainer = _build_trainer(cfg, model, stage)
@@ -199,7 +223,11 @@ def main() -> int:
     wandb.log({"setup/trainable_params": trainable_count})
 
     # DataLoader
-    batch_size = cfg.training.get("batch_size", 4)
+    batch_size = (
+        args.batch_size if args.batch_size is not None else cfg.training.get("batch_size", 4)
+    )
+    if args.batch_size is not None:
+        print(f"Using --batch-size override: {batch_size}")
     grad_accum = cfg.training.get("grad_accum_steps", 1)
     num_workers = cfg.data.get("num_workers", 0)
     epochs = cfg.training.get("epochs", 1)

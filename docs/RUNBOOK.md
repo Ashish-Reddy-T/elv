@@ -21,7 +21,7 @@ python scripts/smoke_test.py --mock --grad-check
 
 **Colab GPU check** — you need A100 40GB or better:
 ```python
-import torch; print(torch.cuda.get_device_name(0), torch.cuda.get_device_properties(0).total_mem / 1e9, "GB")
+python -c "import torch; print(torch.cuda.get_device_name(0), f\"{torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB\")"
 ```
 
 **wandb login** (first time only):
