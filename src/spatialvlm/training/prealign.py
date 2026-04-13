@@ -123,12 +123,10 @@ class PrealignmentTrainer:
     def trainable_parameter_count(self) -> int:
         return sum(p.numel() for p in self.model.parameters() if p.requires_grad)
 
-    def step(self, batch: Mapping[str, Any]) -> PrealignStepOutput:
-        """Run one optimization step.
+    def forward_backward(self, batch: Mapping[str, Any], loss_scale: float = 1.0) -> float:
+        """Forward + backward without optimizer step (for gradient accumulation).
 
-        Batch keys:
-          - `labels`: Tensor[B, T]
-          - any other keys consumed by model forward
+        Returns the unscaled loss value.
         """
         if "labels" not in batch:
             raise KeyError("Prealignment batch must include `labels`.")
@@ -142,13 +140,24 @@ class PrealignmentTrainer:
         logits = outputs.logits if hasattr(outputs, "logits") else outputs["logits"]
         loss = masked_lm_loss(logits=logits, labels=labels, ignore_index=self.config.ignore_index)
 
-        self.optimizer.zero_grad(set_to_none=True)
-        loss.backward()
+        scaled = loss * loss_scale
+        scaled.backward()
+        return float(loss.detach().cpu().item())
+
+    def clip_and_step(self) -> float:
+        """Clip gradients, optimizer step, zero grads. Returns grad norm."""
         grad_norm = clip_grad_norm_(self.model.parameters(), max_norm=self.config.max_grad_norm)
         self.optimizer.step()
+        self.optimizer.zero_grad(set_to_none=True)
+        return float(grad_norm.detach().cpu().item())
 
+    def step(self, batch: Mapping[str, Any]) -> PrealignStepOutput:
+        """Full forward + backward + optimizer step (no accumulation)."""
+        self.optimizer.zero_grad(set_to_none=True)
+        loss_val = self.forward_backward(batch)
+        grad_norm_val = self.clip_and_step()
         return PrealignStepOutput(
-            loss=float(loss.detach().cpu().item()),
-            grad_norm=float(grad_norm.detach().cpu().item()),
+            loss=loss_val,
+            grad_norm=grad_norm_val,
             trainable_params=self.trainable_parameter_count(),
         )

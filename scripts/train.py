@@ -2,7 +2,8 @@
 """Main training script for SpatialVLM pre-alignment and SFT.
 
 Loads a YAML config, builds the model + dataset + dataloader, and runs the
-training loop with wandb logging, gradient accumulation, and checkpointing.
+training loop with wandb logging, gradient accumulation, cosine LR schedule,
+and checkpointing.  Handles SIGTERM for GCP Spot / Slurm --requeue.
 
 Usage
 -----
@@ -18,16 +19,19 @@ Usage
   python scripts/train.py --config configs/train_sft.yaml \
       --frame-dir data/frames/sft/ --resume checkpoints/sft_epoch2.pt
 
-Colab
------
-  Mount Google Drive, point --frame-dir at your cached frames, and run.
-  wandb will prompt for login on first use (or set WANDB_API_KEY).
+HPC (NYU Cloud Bursting)
+-------------------------
+  See scripts/hpc/run_prealign.slurm and docs/RUNBOOK.md.
+  Spot instances send SIGTERM 30s before kill — this script catches it and
+  saves an emergency checkpoint so --requeue picks up where it left off.
 """
 
 from __future__ import annotations
 
 import argparse
+import math
 import os
+import signal
 import sys
 import time
 from pathlib import Path
@@ -35,6 +39,7 @@ from typing import Any
 
 import torch
 from omegaconf import OmegaConf
+from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader
 
 # ---------------------------------------------------------------------------
@@ -155,6 +160,66 @@ def _move_batch(batch: dict[str, Any], device: torch.device) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# LR Scheduler — cosine with linear warmup
+# ---------------------------------------------------------------------------
+
+
+def _build_scheduler(
+    optimizer: torch.optim.Optimizer,
+    total_steps: int,
+    warmup_steps: int,
+) -> LambdaLR:
+    """Cosine schedule with linear warmup."""
+
+    def lr_lambda(current_step: int) -> float:
+        if current_step < warmup_steps:
+            return max(current_step / max(warmup_steps, 1), 1e-8)
+        progress = (current_step - warmup_steps) / max(total_steps - warmup_steps, 1)
+        return max(0.5 * (1.0 + math.cos(math.pi * progress)), 0.0)
+
+    return LambdaLR(optimizer, lr_lambda)
+
+
+# ---------------------------------------------------------------------------
+# SIGTERM handler — emergency checkpoint on Spot preemption
+# ---------------------------------------------------------------------------
+
+_SIGTERM_RECEIVED = False
+
+
+def _sigterm_handler(signum: int, frame: Any) -> None:
+    global _SIGTERM_RECEIVED
+    _SIGTERM_RECEIVED = True
+    print("\n[SIGTERM] Preemption signal received — will checkpoint and exit after current step.")
+
+
+def _save_checkpoint(
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    scheduler: LambdaLR | None,
+    epoch: int,
+    global_step: int,
+    cfg: Any,
+    ckpt_dir: Path,
+    stage: str,
+    tag: str = "",
+) -> Path:
+    suffix = f"_{tag}" if tag else ""
+    ckpt_path = ckpt_dir / f"{stage}_epoch{epoch + 1}_step{global_step}{suffix}.pt"
+    payload: dict[str, Any] = {
+        "epoch": epoch,
+        "global_step": global_step,
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "config": OmegaConf.to_container(cfg, resolve=True),
+    }
+    if scheduler is not None:
+        payload["scheduler_state_dict"] = scheduler.state_dict()
+    torch.save(payload, ckpt_path)
+    return ckpt_path
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -174,9 +239,9 @@ def parse_args() -> argparse.Namespace:
         "--batch-size",
         type=int,
         default=None,
-        help="Override config training.batch_size (use 1 if you hit CUDA OOM)",
+        help="Override config training.batch_size (use 1-4 on A100 40GB)",
     )
-    p.add_argument("--log-every", type=int, default=10, help="Log every N steps")
+    p.add_argument("--log-every", type=int, default=10, help="Log every N optimizer steps")
     p.add_argument("--save-every-epoch", action="store_true", help="Save checkpoint each epoch")
     return p.parse_args()
 
@@ -190,6 +255,9 @@ def main() -> int:
     device = torch.device(args.device)
     dtype = DTYPE_MAP[args.dtype]
     stage = cfg.get("stage", "sft")
+
+    # SIGTERM handler for Spot preemption
+    signal.signal(signal.SIGTERM, _sigterm_handler)
 
     # wandb
     import wandb
@@ -238,19 +306,32 @@ def main() -> int:
     )
     print(f"Dataset size: {len(loader.dataset)}, batches/epoch: {len(loader)}")
 
+    # LR scheduler — cosine with linear warmup
+    steps_per_epoch = len(loader) // grad_accum  # optimizer steps per epoch
+    total_optim_steps = steps_per_epoch * epochs
+    warmup_ratio = cfg.training.get("warmup_ratio", 0.03)
+    warmup_steps = cfg.training.get("warmup_steps", int(total_optim_steps * warmup_ratio))
+    scheduler = _build_scheduler(trainer.optimizer, total_optim_steps, warmup_steps)
+    print(
+        f"LR schedule: {warmup_steps} warmup steps, {total_optim_steps} total optimizer steps "
+        f"(grad_accum={grad_accum}, effective_batch={batch_size * grad_accum})"
+    )
+
     # Checkpoint dir
     ckpt_dir = Path(args.checkpoint_dir)
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
     # Resume
     start_epoch = 0
-    global_step = 0
+    global_step = 0  # counts optimizer steps (not micro-batch steps)
     if args.resume:
         print(f"Resuming from: {args.resume}")
         ckpt = torch.load(args.resume, map_location=device, weights_only=False)
         model.load_state_dict(ckpt["model_state_dict"], strict=False)
         if "optimizer_state_dict" in ckpt:
             trainer.optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+        if "scheduler_state_dict" in ckpt:
+            scheduler.load_state_dict(ckpt["scheduler_state_dict"])
         start_epoch = ckpt.get("epoch", 0)
         global_step = ckpt.get("global_step", 0)
         print(f"Resumed at epoch={start_epoch}, step={global_step}")
@@ -259,42 +340,88 @@ def main() -> int:
     print(f"\n{'=' * 60}")
     print(f"  Starting {stage} training: {epochs} epochs")
     print(f"  batch_size={batch_size}, grad_accum={grad_accum}")
+    print(f"  effective_batch={batch_size * grad_accum}")
     print(f"{'=' * 60}\n")
 
     model.train()
+    trainer.optimizer.zero_grad(set_to_none=True)
+    loss_scale = 1.0 / grad_accum
+
+    preempted = False
     for epoch in range(start_epoch, epochs):
         epoch_loss = 0.0
-        epoch_steps = 0
+        micro_steps_in_epoch = 0
+        optim_steps_in_epoch = 0
         t_epoch = time.perf_counter()
 
-        for step_idx, batch in enumerate(loader):
+        for micro_idx, batch in enumerate(loader):
             batch = _move_batch(batch, device)
 
-            # Trainer.step() handles forward + backward + optimizer step
-            output = trainer.step(batch)
-            epoch_loss += output.loss
-            epoch_steps += 1
-            global_step += 1
+            # Accumulate: forward + scaled backward (no optimizer step)
+            loss_val = trainer.forward_backward(batch, loss_scale=loss_scale)
+            epoch_loss += loss_val
+            micro_steps_in_epoch += 1
 
-            # Logging
-            if global_step % args.log_every == 0:
-                log_dict = {
-                    "train/loss": output.loss,
-                    "train/grad_norm": output.grad_norm,
-                    "train/epoch": epoch + (step_idx + 1) / len(loader),
-                    "train/global_step": global_step,
-                    "train/lr": trainer.optimizer.param_groups[0]["lr"],
-                }
-                if torch.cuda.is_available():
-                    log_dict["system/vram_gb"] = torch.cuda.memory_allocated() / 1e9
-                wandb.log(log_dict, step=global_step)
-                print(
-                    f"  [epoch {epoch + 1}/{epochs}] step {step_idx + 1}/{len(loader)} | "
-                    f"loss={output.loss:.4f} | grad_norm={output.grad_norm:.4f}"
+            # Optimizer step every grad_accum micro-batches
+            is_accum_boundary = micro_steps_in_epoch % grad_accum == 0
+            is_last_batch = micro_idx == len(loader) - 1
+
+            if is_accum_boundary or is_last_batch:
+                grad_norm_val = trainer.clip_and_step()
+                scheduler.step()
+                global_step += 1
+                optim_steps_in_epoch += 1
+
+                # Logging
+                if global_step % args.log_every == 0:
+                    # Average loss over the accumulation window
+                    window = (
+                        grad_accum if is_accum_boundary else (micro_steps_in_epoch % grad_accum)
+                    )
+                    avg_window_loss = (
+                        sum([loss_val]) if window == 1 else epoch_loss / micro_steps_in_epoch
+                    )  # approx
+                    log_dict = {
+                        "train/loss": loss_val,
+                        "train/grad_norm": grad_norm_val,
+                        "train/epoch": epoch + micro_steps_in_epoch / len(loader),
+                        "train/global_step": global_step,
+                        "train/lr": scheduler.get_last_lr()[0],
+                    }
+                    if torch.cuda.is_available():
+                        log_dict["system/vram_gb"] = torch.cuda.memory_allocated() / 1e9
+                    wandb.log(log_dict, step=global_step)
+                    print(
+                        f"  [epoch {epoch + 1}/{epochs}] "
+                        f"step {global_step}/{total_optim_steps} | "
+                        f"loss={loss_val:.4f} | grad_norm={grad_norm_val:.4f} | "
+                        f"lr={scheduler.get_last_lr()[0]:.2e}"
+                    )
+
+            # Spot preemption — save and exit
+            if _SIGTERM_RECEIVED:
+                print("[SIGTERM] Saving emergency checkpoint...")
+                ckpt_path = _save_checkpoint(
+                    model,
+                    trainer.optimizer,
+                    scheduler,
+                    epoch,
+                    global_step,
+                    cfg,
+                    ckpt_dir,
+                    stage,
+                    tag="preempted",
                 )
+                print(f"  Emergency checkpoint: {ckpt_path}")
+                wandb.save(str(ckpt_path))
+                preempted = True
+                break
+
+        if preempted:
+            break
 
         dt = time.perf_counter() - t_epoch
-        avg_loss = epoch_loss / max(epoch_steps, 1)
+        avg_loss = epoch_loss / max(micro_steps_in_epoch, 1)
         print(f"\n  Epoch {epoch + 1} done in {dt:.1f}s — avg loss: {avg_loss:.4f}\n")
         wandb.log(
             {"train/epoch_loss": avg_loss, "train/epoch_time_s": dt},
@@ -303,22 +430,24 @@ def main() -> int:
 
         # Save checkpoint
         if args.save_every_epoch or epoch == epochs - 1:
-            ckpt_path = ckpt_dir / f"{stage}_epoch{epoch + 1}.pt"
-            torch.save(
-                {
-                    "epoch": epoch + 1,
-                    "global_step": global_step,
-                    "model_state_dict": model.state_dict(),
-                    "optimizer_state_dict": trainer.optimizer.state_dict(),
-                    "config": OmegaConf.to_container(cfg, resolve=True),
-                },
-                ckpt_path,
+            ckpt_path = _save_checkpoint(
+                model,
+                trainer.optimizer,
+                scheduler,
+                epoch,
+                global_step,
+                cfg,
+                ckpt_dir,
+                stage,
             )
             print(f"  Checkpoint saved: {ckpt_path}")
             wandb.save(str(ckpt_path))
 
+    if preempted:
+        print("\nTraining interrupted by preemption. Resume with --resume <checkpoint>.")
+    else:
+        print("\nTraining complete.")
     run.finish()
-    print("\nTraining complete.")
     return 0
 
 

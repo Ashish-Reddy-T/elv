@@ -17,7 +17,7 @@ dependencies = [
     "trl>=0.18.1",
     "accelerate>=1.6.0",
     "einops>=0.8.1",
-    "xformers>=0.0.31",  # <-- Updated to guarantee Blackwell kernels
+    "xformers>=0.0.31", 
     "omegaconf==2.3.0",
     "wandb==0.20.1",
     "pytest==8.3.5",

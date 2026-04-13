@@ -9,11 +9,12 @@ model:
 
 training:
   epochs: 1
-  batch_size: 64
-  grad_accum_steps: 1
+  batch_size: 8              # micro-batch per GPU (A100 40GB)
+  grad_accum_steps: 8        # effective batch = 8 * 8 = 64
   learning_rate: 1.0e-4
   weight_decay: 0.01
   max_grad_norm: 1.0
+  warmup_ratio: 0.03         # 3% of total steps as linear warmup
   ignore_index: -100
   trainable_keywords:
     - projector

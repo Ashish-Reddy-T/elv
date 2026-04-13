@@ -79,6 +79,11 @@
 - [x] `configs/train_prealign.yaml`
 - [x] `configs/train_sft.yaml`
 - [x] `configs/train_grpo.yaml`
+- [x] `scripts/train.py` — gradient accumulation, cosine LR scheduler with warmup, SIGTERM preemption handler
+- [x] `scripts/hpc/setup_env.sh` — Singularity overlay + conda bootstrap for NYU HPC
+- [x] `scripts/hpc/run_prealign.slurm` — Stage 1 Slurm job (A100, --requeue)
+- [x] `scripts/hpc/run_sft.slurm` — Stage 2 Slurm job (A100, --requeue)
+- [x] `scripts/hpc/run_smoke_test.slurm` — GPU smoke test job
 
 ## Phase 8: Evaluation
 - [x] `src/spatialvlm/eval/metrics.py` — SR, SPL, PSI, CMB

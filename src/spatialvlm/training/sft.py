@@ -37,7 +37,6 @@ class SFTConfig:
         "projector",
         "gatr",
         "sva",
-        "cross_attn",
         "lora",
     )
     # When non-None, `trainable_groups` overrides `trainable_keywords` and
@@ -172,7 +171,11 @@ class SFTTrainer:
     def trainable_parameter_count(self) -> int:
         return sum(p.numel() for p in self.model.parameters() if p.requires_grad)
 
-    def step(self, batch: Mapping[str, Any]) -> SFTStepOutput:
+    def forward_backward(self, batch: Mapping[str, Any], loss_scale: float = 1.0) -> float:
+        """Forward + backward pass without optimizer step (for gradient accumulation).
+
+        Returns the unscaled loss value.
+        """
         if "labels" not in batch:
             raise KeyError("SFT batch must include `labels`.")
         labels = batch["labels"]
@@ -189,13 +192,24 @@ class SFTTrainer:
             label_smoothing=self.config.label_smoothing,
         )
 
-        self.optimizer.zero_grad(set_to_none=True)
-        loss.backward()
+        scaled = loss * loss_scale
+        scaled.backward()
+        return float(loss.detach().cpu().item())
+
+    def clip_and_step(self) -> float:
+        """Clip gradients, optimizer step, zero grads. Returns grad norm."""
         grad_norm = clip_grad_norm_(self.model.parameters(), max_norm=self.config.max_grad_norm)
         self.optimizer.step()
+        self.optimizer.zero_grad(set_to_none=True)
+        return float(grad_norm.detach().cpu().item())
 
+    def step(self, batch: Mapping[str, Any]) -> SFTStepOutput:
+        """Full forward + backward + optimizer step (no accumulation)."""
+        self.optimizer.zero_grad(set_to_none=True)
+        loss_val = self.forward_backward(batch)
+        grad_norm_val = self.clip_and_step()
         return SFTStepOutput(
-            loss=float(loss.detach().cpu().item()),
-            grad_norm=float(grad_norm.detach().cpu().item()),
+            loss=loss_val,
+            grad_norm=grad_norm_val,
             trainable_params=self.trainable_parameter_count(),
         )
