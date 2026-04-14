@@ -63,6 +63,7 @@ class SpatialVLM(nn.Module):
         self,
         config: SpatialVLMConfig | None = None,
         device: torch.device | None = None,
+        torch_dtype: torch.dtype | None = None,
         lazy_load_encoders: bool = True,
         lazy_load_backbone: bool = True,
         local_files_only: bool = False,
@@ -132,6 +133,7 @@ class SpatialVLM(nn.Module):
             lazy_load=lazy_load_backbone,
             local_files_only=local_files_only,
             device=device,
+            torch_dtype=torch_dtype,
         )
 
         self.to(device)
