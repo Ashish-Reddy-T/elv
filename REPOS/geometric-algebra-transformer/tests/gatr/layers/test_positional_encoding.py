@@ -2,8 +2,8 @@
 # All rights reserved.
 import pytest
 import torch
-
 from gatr.layers import ApplyRotaryPositionalEncoding
+
 from tests.helpers import BATCH_DIMS
 
 

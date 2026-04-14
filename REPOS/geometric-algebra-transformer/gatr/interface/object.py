@@ -1,6 +1,5 @@
 # Copyright (c) 2024 Qualcomm Technologies, Inc.
 # All rights reserved.
-from typing import Optional
 
 import torch
 
@@ -79,7 +78,7 @@ def embed_3d_object(
 def extract_3d_object(
     multivector: torch.Tensor,
     normalize_quaternion: bool = True,
-    sign_reference: Optional[torch.Tensor] = None,
+    sign_reference: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Extracts 3D position and quaternion orientation from the multivector embedding of an object.
 

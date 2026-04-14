@@ -4,7 +4,6 @@
 
 import pytest
 import torch
-
 from gatr.primitives.dual import (
     dual,
     efficient_equivariant_join,
@@ -13,6 +12,7 @@ from gatr.primitives.dual import (
     join_norm,
 )
 from gatr.primitives.invariants import norm
+
 from tests.helpers import (
     BATCH_DIMS,
     TOLERANCES,

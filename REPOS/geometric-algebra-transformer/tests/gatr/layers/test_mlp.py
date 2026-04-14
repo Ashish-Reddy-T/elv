@@ -2,9 +2,9 @@
 # All rights reserved.
 import pytest
 import torch
-
 from gatr.layers import GeoMLP
 from gatr.layers.mlp.config import MLPConfig
+
 from tests.helpers import BATCH_DIMS, TOLERANCES, check_pin_equivariance
 
 _CHANNELS = [((5,), (12,)), ((4, 8, 7), (10, 9, 3))]

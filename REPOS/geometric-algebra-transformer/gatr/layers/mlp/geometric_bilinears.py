@@ -2,8 +2,6 @@
 # All rights reserved.
 """Pin-equivariant geometric product layer between multivector tensors (torch.nn.Modules)."""
 
-from typing import Optional, Tuple
-
 import torch
 from torch import nn
 
@@ -35,9 +33,9 @@ class GeometricBilinear(nn.Module):
         self,
         in_mv_channels: int,
         out_mv_channels: int,
-        hidden_mv_channels: Optional[int] = None,
-        in_s_channels: Optional[int] = None,
-        out_s_channels: Optional[int] = None,
+        hidden_mv_channels: int | None = None,
+        in_s_channels: int | None = None,
+        out_s_channels: int | None = None,
     ) -> None:
         super().__init__()
 
@@ -46,9 +44,9 @@ class GeometricBilinear(nn.Module):
             hidden_mv_channels = out_mv_channels
 
         out_mv_channels_each = hidden_mv_channels // 2
-        assert (
-            out_mv_channels_each * 2 == hidden_mv_channels
-        ), "GeometricBilinear needs even channel number"
+        assert out_mv_channels_each * 2 == hidden_mv_channels, (
+            "GeometricBilinear needs even channel number"
+        )
 
         # Linear projections for GP
         self.linear_left = EquiLinear(
@@ -83,7 +81,7 @@ class GeometricBilinear(nn.Module):
         multivectors: torch.Tensor,
         reference_mv: torch.Tensor,
         scalars: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Forward pass.
 
         Parameters

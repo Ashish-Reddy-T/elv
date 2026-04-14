@@ -3,7 +3,6 @@
 """Baseline transformer."""
 
 from functools import partial
-from typing import Optional, Tuple
 
 import torch
 from einops import rearrange
@@ -177,7 +176,7 @@ class BaselineSelfAttention(nn.Module):
             self.pos_encoding = None
 
     def forward(
-        self, inputs: torch.Tensor, attention_mask: Optional[torch.Tensor] = None
+        self, inputs: torch.Tensor, attention_mask: torch.Tensor | None = None
     ) -> torch.Tensor:
         """Forward pass.
 
@@ -452,9 +451,9 @@ class BaselineAxialTransformer(nn.Module):
         hidden_channels: int,
         num_blocks: int = 20,
         num_heads: int = 8,
-        pos_encodings: Tuple[bool, bool] = (False, False),
+        pos_encodings: tuple[bool, bool] = (False, False),
         pos_encoding_base: int = 4096,
-        collapse_dims: Tuple[bool, bool] = (False, False),
+        collapse_dims: tuple[bool, bool] = (False, False),
     ) -> None:
         super().__init__()
         self.linear_in = nn.Linear(in_channels, hidden_channels)
@@ -472,7 +471,7 @@ class BaselineAxialTransformer(nn.Module):
         self.linear_out = nn.Linear(hidden_channels, out_channels)
         self._collapse_dims_for_even_blocks, self._collapse_dims_for_odd_blocks = collapse_dims
 
-    def forward(self, inputs: torch.Tensor, attention_mask: Optional[Tuple] = None) -> torch.Tensor:
+    def forward(self, inputs: torch.Tensor, attention_mask: tuple | None = None) -> torch.Tensor:
         """Forward pass.
 
         Parameters

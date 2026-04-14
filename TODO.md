@@ -40,6 +40,8 @@
 ## Phase 4: Fusion Modules
 - [x] `src/spatialvlm/fusion/sva.py` — SVA: 1369 queries (DINOv2 base), 3314 KV, 2 layers
 - [x] `tests/test_sva.py` — shape checks, typed attention bias (3x3 matrix), DINOv2 query base
+- [x] `src/spatialvlm/fusion/sva.py` — `return_attention_stats` diagnostic probe (unfused attention path, per-layer per-head mass on SigLIP/DINO/GATr)
+- [x] `tests/test_sva_attention_probe.py` — probe shape/correctness, fast-path parity, mask-aware, gradients
 - [x] `src/spatialvlm/fusion/gated_cross_attn.py` — DEPRECATED (replaced by DeepStack)
 - [x] `tests/test_gated_cross_attn.py` — DEPRECATED (skipped, kept for ablation reference)
 
@@ -54,18 +56,34 @@
 
 ## Phase 6: Data Pipeline
 - [x] `src/spatialvlm/data/habitat_env.py` — Habitat 3.0 wrapper (RGB + depth @ 518x518)
-- [x] `src/spatialvlm/data/datasets.py` — R2R-CE, RxR-CE, SQA3D loaders
+- [x] `src/spatialvlm/data/datasets.py` — R2R-CE, RxR-CE, SQA3D loaders (metadata only)
 - [x] `src/spatialvlm/data/preprocessing.py` — image resize, depth normalization
+- [x] `src/spatialvlm/data/collation.py` — batch builder (frames → model.forward() dict)
+- [x] `src/spatialvlm/data/tokenization.py` — input_ids + spatial placeholders + labels
+- [x] `src/spatialvlm/data/datasets.py` — add CachedFrameDataset for pre-rendered .pt files
+- [x] `scripts/train.py` — main training loop (DataLoader + wandb + checkpointing)
+- [x] `scripts/generate_synthetic_frames.py` — synthetic frames for pipeline testing
+- [x] `scripts/smoke_test.py` — stage-by-stage forward-pass verification
+- [x] `backbone/rope_patch.py` — DeepStack embedding injection via forward hook
+- [ ] `scripts/render_training_frames.py` — Habitat frame caching for prealign + SFT
 
 ## Phase 7: Training Pipeline
-- [x] `src/spatialvlm/training/prealign.py` — Stage 1: projectors only (~77M), LLaVA-558K
+- [x] `src/spatialvlm/training/prealign.py` — Stage 1: projectors only (~77M), Habitat frames
 - [x] `src/spatialvlm/training/sft.py` — Stage 2: ~206M trainable
+- [x] `src/spatialvlm/training/sft.py` — `set_trainable_by_groups` + `trainable_groups` config override for per-stream staged training (siglip_proj / dino_proj / gatr / sva / lora)
+- [x] `src/spatialvlm/training/prealign.py` — `trainable_groups` override wired through PrealignConfig
+- [x] `tests/test_freeze_groups.py` — group coverage, union behaviour, SFT/Prealign trainer integration
 - [x] `src/spatialvlm/training/grpo.py` — Stage 3: GRPO with curriculum
 - [x] `src/spatialvlm/training/fdpo.py` — Stage 3 alt: fDPO comparison
 - [x] `src/spatialvlm/training/curriculum.py` — staged reward weighting schedule
 - [x] `configs/train_prealign.yaml`
 - [x] `configs/train_sft.yaml`
 - [x] `configs/train_grpo.yaml`
+- [x] `scripts/train.py` — gradient accumulation, cosine LR scheduler with warmup, SIGTERM preemption handler
+- [x] `scripts/hpc/setup_env.sh` — Singularity overlay + conda bootstrap for NYU HPC
+- [x] `scripts/hpc/run_prealign.slurm` — Stage 1 Slurm job (A100, --requeue)
+- [x] `scripts/hpc/run_sft.slurm` — Stage 2 Slurm job (A100, --requeue)
+- [x] `scripts/hpc/run_smoke_test.slurm` — GPU smoke test job
 
 ## Phase 8: Evaluation
 - [x] `src/spatialvlm/eval/metrics.py` — SR, SPL, PSI, CMB

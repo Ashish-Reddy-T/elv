@@ -1,7 +1,6 @@
 # Copyright (c) 2024 Qualcomm Technologies, Inc.
 # All rights reserved.
 import torch
-
 from gatr.interface import embed_pluecker_ray, embed_point, extract_pluecker_ray
 from gatr.primitives.dual import equivariant_join
 

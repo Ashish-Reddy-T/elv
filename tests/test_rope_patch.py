@@ -12,7 +12,68 @@ from spatialvlm.backbone.rope_patch import (
     SPATIAL_TOKEN_TYPE_ID,
     _build_icosahedral_cos_sin,
     _get_icosahedral_rope,
+    stash_spatial_forward_kwargs,
 )
+
+
+class TestStashSpatialForwardKwargs:
+    """Ensure SpatialVLM kwargs are popped before HF Qwen3VLModel (no duplicate keywords)."""
+
+    def test_pops_keys_from_kwargs(self):
+        class Rotary:
+            pass
+
+        class LM:
+            def __init__(self) -> None:
+                self.rotary_emb = Rotary()
+
+        class Inner:
+            def __init__(self) -> None:
+                self.language_model = LM()
+
+        class FakePeft:
+            def __init__(self) -> None:
+                self.model = Inner()
+
+        m = FakePeft()
+        ds = torch.zeros(1, 2, 4096)
+        kwargs = {
+            "input_ids": torch.ones(1, 8, dtype=torch.long),
+            "deepstack_visual_embeds": ds,
+            "spatial_coords_3d": torch.zeros(1, 2, 3),
+            "spatial_token_mask": torch.zeros(1, 8, dtype=torch.bool),
+        }
+        stash_spatial_forward_kwargs(m, kwargs)
+        assert "deepstack_visual_embeds" not in kwargs
+        assert "spatial_coords_3d" not in kwargs
+        assert "spatial_token_mask" not in kwargs
+        assert "input_ids" in kwargs
+        assert m.model.language_model.rotary_emb._spatial_coords_3d is not None
+        assert m.model.language_model.rotary_emb._spatial_token_mask is not None
+
+    def test_second_call_noop_when_keys_gone(self):
+        class Rotary:
+            pass
+
+        class LM:
+            def __init__(self) -> None:
+                self.rotary_emb = Rotary()
+
+        class Inner:
+            def __init__(self) -> None:
+                self.language_model = LM()
+
+        class FakePeft:
+            def __init__(self) -> None:
+                self.model = Inner()
+
+        m = FakePeft()
+        kwargs: dict = {"input_ids": torch.ones(1, 4, dtype=torch.long)}
+        stash_spatial_forward_kwargs(m, kwargs)
+        r = m.model.language_model.rotary_emb
+        r._spatial_coords_3d = "keep"
+        stash_spatial_forward_kwargs(m, kwargs)
+        assert r._spatial_coords_3d == "keep"
 
 
 class TestBuildIcosahedralCosSin:

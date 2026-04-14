@@ -140,6 +140,11 @@ class GATrWrapper(nn.Module):
         mv_in = self._embed_point(coords).unsqueeze(-2)  # [B, N, 1, 16]
         scalar_in = torch.linalg.vector_norm(coords, dim=-1, keepdim=True)  # [B, N, 1]
 
+        # Geometry stays fp32; train.py casts trainable GATr weights to bf16/fp16 — align here.
+        param_dtype = next(self.gatr.parameters()).dtype
+        mv_in = mv_in.to(dtype=param_dtype)
+        scalar_in = scalar_in.to(dtype=param_dtype)
+
         mv_out, scalar_out = self.gatr(  # [B, N, C_mv, 16], [B, N, C_s]
             mv_in,
             scalars=scalar_in,

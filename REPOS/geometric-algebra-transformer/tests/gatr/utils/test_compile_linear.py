@@ -4,7 +4,6 @@ from copy import deepcopy
 
 import pytest
 import torch
-
 from gatr.layers.linear import EquiLinear
 from gatr.layers.mlp.config import MLPConfig
 from gatr.layers.mlp.mlp import GeoMLP

@@ -9,21 +9,28 @@ model:
 
 training:
   epochs: 3
-  batch_size: 32
-  grad_accum_steps: 2
+  batch_size: 4              # micro-batch per GPU (A100 40GB)
+  grad_accum_steps: 8        # effective batch = 4 * 8 = 32
   learning_rate: 5.0e-5
   weight_decay: 0.01
   max_grad_norm: 1.0
+  warmup_ratio: 0.03         # 3% of total steps as linear warmup
   ignore_index: -100
   label_smoothing: 0.0
   trainable_keywords:
     - projector
     - gatr
     - sva
-    - cross_attn
     - lora
+  # cross_attn removed — gated cross-attention replaced by DeepStack (0 params)
+  # Optional: staged training via freeze groups
+  # trainable_groups: [gatr, sva]        # Phase 1: geometry + fusion only
+  # trainable_groups: [gatr, sva, dino_proj]  # Phase 2: add DINOv2 projector
+  # trainable_groups: null               # Phase 3: all keywords (default)
 
 data:
+  dataset: habitat-frames
+  frame_dir: data/frames/sft/
   datasets:
     - r2r-ce
     - rxr-ce

@@ -1,7 +1,6 @@
 # Copyright (c) 2023 Qualcomm Technologies, Inc.
 # All rights reserved.
 import time
-from typing import Optional, Union
 
 import mlflow
 import numpy as np
@@ -18,9 +17,7 @@ WAIT_TIME_RANDOM = (
 LOGGING_ENABLED = True
 
 
-def log_mlflow(
-    key: str, value: Union[float, str], step: Optional[int] = None, kind: str = "metric"
-) -> None:
+def log_mlflow(key: str, value: float | str, step: int | None = None, kind: str = "metric") -> None:
     """Logs metric or param to MLflow.
 
     Catches exceptions due to locked or unavailable DB and then retries.

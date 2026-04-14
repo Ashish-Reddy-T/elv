@@ -2,8 +2,6 @@
 # All rights reserved.
 """Factory functions for simple MLPs for multivector data."""
 
-from typing import List, Tuple, Union
-
 import torch
 from torch import nn
 
@@ -44,7 +42,7 @@ class GeoMLP(nn.Module):
             [None for _ in config.mv_channels] if config.s_channels is None else config.s_channels
         )
 
-        layers: List[nn.Module] = []
+        layers: list[nn.Module] = []
 
         if len(config.mv_channels) >= 2:
             layers.append(
@@ -70,7 +68,7 @@ class GeoMLP(nn.Module):
 
     def forward(
         self, multivectors: torch.Tensor, scalars: torch.Tensor, reference_mv: torch.Tensor
-    ) -> Tuple[torch.Tensor, Union[torch.Tensor, None]]:
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
         """Forward pass.
 
         Parameters

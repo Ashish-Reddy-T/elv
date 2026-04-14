@@ -2,8 +2,9 @@
 # All rights reserved.
 """Equivariant transformer for multivector data."""
 
+from collections.abc import Sequence
 from dataclasses import replace
-from typing import Literal, Optional, Sequence, Tuple, Union
+from typing import Literal
 from warnings import warn
 
 import torch
@@ -64,19 +65,19 @@ class GATr(nn.Module):
         in_mv_channels: int,
         out_mv_channels: int,
         hidden_mv_channels: int,
-        in_s_channels: Optional[int],
-        out_s_channels: Optional[int],
-        hidden_s_channels: Optional[int],
+        in_s_channels: int | None,
+        out_s_channels: int | None,
+        hidden_s_channels: int | None,
         attention: SelfAttentionConfig,
         mlp: MLPConfig,
         num_blocks: int = 10,
-        reinsert_mv_channels: Optional[Tuple[int]] = None,
-        reinsert_s_channels: Optional[Tuple[int]] = None,
+        reinsert_mv_channels: tuple[int] | None = None,
+        reinsert_s_channels: tuple[int] | None = None,
         checkpoint_blocks: bool = False,
-        dropout_prob: Optional[float] = None,
-        checkpoint: Union[
-            None, Sequence[Literal["block"]], Sequence[Literal["mlp", "attention"]]
-        ] = None,
+        dropout_prob: float | None = None,
+        checkpoint: None
+        | Sequence[Literal["block"]]
+        | Sequence[Literal["mlp", "attention"]] = None,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -149,10 +150,10 @@ class GATr(nn.Module):
     def forward(
         self,
         multivectors: torch.Tensor,
-        scalars: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        join_reference: Union[Tensor, str] = "data",
-    ) -> Tuple[torch.Tensor, Union[torch.Tensor, None]]:
+        scalars: torch.Tensor | None = None,
+        attention_mask: torch.Tensor | None = None,
+        join_reference: Tensor | str = "data",
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
         """Forward pass of the network.
 
         Parameters

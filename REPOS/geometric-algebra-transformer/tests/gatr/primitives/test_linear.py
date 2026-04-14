@@ -4,7 +4,6 @@
 
 import pytest
 import torch
-
 from gatr.primitives.linear import (
     NUM_PIN_LINEAR_BASIS_ELEMENTS,
     equi_linear,
@@ -12,6 +11,7 @@ from gatr.primitives.linear import (
     grade_project,
     reverse,
 )
+
 from tests.helpers import (
     BATCH_DIMS,
     TOLERANCES,

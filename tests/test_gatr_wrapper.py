@@ -46,6 +46,16 @@ class TestGATrWrapperShapes:
         with pytest.raises(ValueError, match="Expected points_3d shape"):
             _ = gatr_wrapper(torch.randn(2, 64, 4))
 
+    def test_fp32_points_bf16_gatr_weights(self, gatr_wrapper):
+        """Mimics train.py: frozen geometry fp32, trainable GATr + projector bf16."""
+        for p in gatr_wrapper.parameters():
+            if p.requires_grad:
+                p.data = p.data.to(dtype=torch.bfloat16)
+        points = torch.randn(1, 32, 3, dtype=torch.float32)
+        out = gatr_wrapper(points)
+        assert out.shape == (1, 32, 4096)
+        assert out.dtype == torch.bfloat16
+
 
 class TestGATrWrapperNumerics:
     def test_outputs_are_finite_for_edge_values(self, gatr_wrapper):

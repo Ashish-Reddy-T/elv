@@ -2,8 +2,6 @@
 # All rights reserved.
 """Geometric algebra operations based on the clifford library."""
 
-from typing import Optional
-
 import clifford
 import numpy as np
 import torch
@@ -39,7 +37,7 @@ def mv_list_to_tensor(multivectors, batch_shape=None):
     return tensor
 
 
-def sample_pin_multivector(spin: bool = False, rng: Optional[np.random.Generator] = None):
+def sample_pin_multivector(spin: bool = False, rng: np.random.Generator | None = None):
     """Samples from the Pin(3,0,1) group as a product of reflections."""
 
     if rng is None:

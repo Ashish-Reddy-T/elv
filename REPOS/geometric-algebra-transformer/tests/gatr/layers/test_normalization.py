@@ -2,9 +2,9 @@
 # All rights reserved.
 import pytest
 import torch
-
 from gatr.layers.layer_norm import EquiLayerNorm
 from gatr.primitives import norm
+
 from tests.helpers import TOLERANCES, check_pin_equivariance
 
 

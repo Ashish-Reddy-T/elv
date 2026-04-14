@@ -55,4 +55,11 @@ class MLPProjector(nn.Module):
         -------
         Tensor[B, N, out_dim]
         """
+        # Frozen vision encoders often stay fp32 while projectors are cast to bf16/fp16
+        # (see scripts/train.py). Align activations to parameter dtype for matmul.
+        first = self.net[0]
+        assert isinstance(first, nn.Linear)
+        w_dtype = first.weight.dtype
+        if x.dtype != w_dtype:
+            x = x.to(dtype=w_dtype)
         return self.net(x)  # [B, N, out_dim]

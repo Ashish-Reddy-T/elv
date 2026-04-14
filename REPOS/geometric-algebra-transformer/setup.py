@@ -3,11 +3,10 @@
 # All rights reserved.
 
 from pathlib import Path
-from typing import List
 
 from setuptools import find_packages, setup
 
-extra_files: List[str] = [
+extra_files: list[str] = [
     "primitives/data/geometric_product.pt",
     "primitives/data/outer_product.pt",
 ]

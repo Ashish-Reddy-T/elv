@@ -2,8 +2,8 @@
 # All rights reserved.
 import pytest
 import torch
-
 from gatr.primitives.dropout import grade_dropout
+
 from tests.helpers import BATCH_DIMS, MILD_TOLERANCES, TOLERANCES, check_pin_equivariance
 
 

@@ -1,7 +1,6 @@
 # Copyright (c) 2023 Qualcomm Technologies, Inc.
 # All rights reserved.
 import torch
-
 from gatr.utils.tensors import block_stack, expand_pairwise, to_nd
 
 

@@ -45,9 +45,9 @@ class ApplyRotaryPositionalEncoding(torch.nn.Module):
     def __init__(self, num_channels, item_dim, base=4096):
         super().__init__()
 
-        assert (
-            num_channels % 2 == 0
-        ), "Number of channels needs to be even for rotary position embeddings"
+        assert num_channels % 2 == 0, (
+            "Number of channels needs to be even for rotary position embeddings"
+        )
 
         inv_freq = 1.0 / (base ** (torch.arange(0, num_channels, 2).float() / num_channels))
         self.register_buffer("inv_freq", inv_freq)

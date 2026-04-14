@@ -6,7 +6,6 @@ from pathlib import Path
 
 import hydra
 import numpy as np
-
 from gatr.experiments.nbody import NBodySimulator
 
 

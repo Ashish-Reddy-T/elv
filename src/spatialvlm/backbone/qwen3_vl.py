@@ -270,4 +270,9 @@ class Qwen3VLBackbone(nn.Module):
         self.load_model()
         if self.model is None:
             raise RuntimeError("Qwen3 model is unavailable. Call load_model() before forward().")
+        # Strip SpatialVLM kwargs before PEFT/HF — avoids duplicate ``deepstack_visual_embeds``
+        # when Qwen3VLModel forwards ``deepstack_visual_embeds=<local>`` and ``**kwargs``.
+        from spatialvlm.backbone.rope_patch import stash_spatial_forward_kwargs
+
+        stash_spatial_forward_kwargs(self.model, kwargs)
         return self.model(*args, **kwargs)

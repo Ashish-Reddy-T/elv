@@ -6,7 +6,6 @@ import clifford
 import numpy as np
 import torch
 from clifford import pga as PGA
-
 from gatr.utils.clifford import mv_list_to_tensor
 
 

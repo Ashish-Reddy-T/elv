@@ -162,6 +162,63 @@ def patch_rope_forward(
     return cos, sin
 
 
+def _deepstack_embedding_hook(
+    module: Any,
+    input: tuple,  # noqa: ARG001
+    output: torch.Tensor,
+) -> torch.Tensor:
+    """Forward hook on the embedding layer: splice fused visual tokens at spatial positions."""
+    visual_embeds = getattr(module, "_deepstack_visual_embeds", None)
+    spatial_mask = getattr(module, "_deepstack_spatial_mask", None)
+
+    if visual_embeds is not None and spatial_mask is not None:
+        # output: [B, seq_len, hidden_dim]  spatial_mask: [B, seq_len]
+        flat = visual_embeds.reshape(-1, output.shape[-1]).to(output.dtype)
+        output = output.clone()
+        output[spatial_mask] = flat
+        # Clear — one-shot per forward
+        module._deepstack_visual_embeds = None
+        module._deepstack_spatial_mask = None
+
+    return output
+
+
+def stash_spatial_forward_kwargs(model_self: Any, kwargs: dict[str, Any]) -> None:
+    """Pop SpatialVLM-only kwargs and stash for RoPE / DeepStack hooks.
+
+    Qwen3VLModel.forward passes ``deepstack_visual_embeds=<local>`` and ``**kwargs``
+    into the text stack; if ``kwargs`` still contains ``deepstack_visual_embeds``,
+    Python raises "multiple values for keyword argument". Call this on the outer
+    Peft / HF model **before** any forward so those keys never reach Qwen3VLModel.
+
+    Safe to call twice on the same ``kwargs`` dict (second call is a no-op).
+    """
+    if not any(
+        k in kwargs for k in ("spatial_coords_3d", "spatial_token_mask", "deepstack_visual_embeds")
+    ):
+        return
+
+    spatial_coords_3d = kwargs.pop("spatial_coords_3d", None)
+    spatial_token_mask = kwargs.pop("spatial_token_mask", None)
+    deepstack_visual_embeds = kwargs.pop("deepstack_visual_embeds", None)
+
+    if spatial_token_mask is None and spatial_coords_3d is not None:
+        mm_token_type_ids = kwargs.get("mm_token_type_ids", None)
+        if mm_token_type_ids is not None:
+            spatial_token_mask = mm_token_type_ids == SPATIAL_TOKEN_TYPE_ID
+
+    try:
+        rotary_emb = model_self.model.language_model.rotary_emb
+        rotary_emb._spatial_coords_3d = spatial_coords_3d
+        rotary_emb._spatial_token_mask = spatial_token_mask
+        if deepstack_visual_embeds is not None and spatial_token_mask is not None:
+            embed_module = _find_embed_tokens(model_self)
+            embed_module._deepstack_visual_embeds = deepstack_visual_embeds
+            embed_module._deepstack_spatial_mask = spatial_token_mask
+    except AttributeError:
+        pass
+
+
 def patch_model_forward(
     original_forward: Any,
     model_self: Any,
@@ -170,26 +227,38 @@ def patch_model_forward(
 ) -> Any:
     """Patched Qwen3VLForConditionalGeneration.forward().
 
-    Intercepts spatial_coords_3d and spatial_token_mask from kwargs,
-    stashes them on the rotary embedding module, then calls the original forward.
+    Intercepts spatial_coords_3d, spatial_token_mask, and deepstack_visual_embeds
+    from kwargs.  Stashes RoPE data on the rotary embedding module and visual
+    embeddings on the word-embedding module (consumed by a registered hook).
     """
-    # Extract our custom kwargs (not part of Qwen3-VL's signature)
-    spatial_coords_3d = kwargs.pop("spatial_coords_3d", None)
-    spatial_token_mask = kwargs.pop("spatial_token_mask", None)
-
-    # Fallback: derive spatial_token_mask from mm_token_type_ids if not provided
-    if spatial_token_mask is None and spatial_coords_3d is not None:
-        mm_token_type_ids = kwargs.get("mm_token_type_ids", None)
-        if mm_token_type_ids is not None:
-            spatial_token_mask = mm_token_type_ids == SPATIAL_TOKEN_TYPE_ID
-
-    # Stash on the rotary embedding module for the RoPE patch to consume
-    rotary_emb = model_self.model.language_model.rotary_emb
-    rotary_emb._spatial_coords_3d = spatial_coords_3d
-    rotary_emb._spatial_token_mask = spatial_token_mask
-
-    # Call original forward
+    stash_spatial_forward_kwargs(model_self, kwargs)
     return original_forward(*args, **kwargs)
+
+
+def _find_embed_tokens(model: Any) -> Any:
+    """Locate the word-embedding module (works through PEFT wrapping)."""
+    # Standard HuggingFace method (works for PeftModel too)
+    embed = getattr(model, "get_input_embeddings", None)
+    if callable(embed):
+        module = embed()
+        if module is not None:
+            return module
+
+    # Fallback: traverse known Qwen3-VL paths
+    for path in [
+        ("model", "language_model", "embed_tokens"),
+        ("model", "embed_tokens"),
+        ("base_model", "model", "model", "language_model", "embed_tokens"),
+    ]:
+        obj = model
+        try:
+            for attr in path:
+                obj = getattr(obj, attr)
+            return obj
+        except AttributeError:
+            continue
+
+    raise AttributeError("Cannot find embed_tokens module in model.")
 
 
 def apply_rope_patch(model: Any) -> None:
@@ -228,6 +297,12 @@ def apply_rope_patch(model: Any) -> None:
     original_rope_forward = rotary_emb.forward
     rotary_emb.forward = functools.partial(patch_rope_forward, original_rope_forward, rotary_emb)
 
-    # Patch 2: Model forward (The Catcher)
+    # Patch 2: Model forward (The Catcher + DeepStack stash)
     original_model_forward = model.forward
     model.forward = functools.partial(patch_model_forward, original_model_forward, model)
+
+    # Patch 3: Embedding hook (DeepStack injection — splices visual tokens into embeddings)
+    embed_tokens = _find_embed_tokens(model)
+    embed_tokens._deepstack_visual_embeds = None
+    embed_tokens._deepstack_spatial_mask = None
+    embed_tokens.register_forward_hook(_deepstack_embedding_hook)

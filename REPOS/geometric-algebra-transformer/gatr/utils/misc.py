@@ -1,10 +1,10 @@
 # Copyright (c) 2024 Qualcomm Technologies, Inc.
 # All rights reserved.
 import random
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from functools import wraps
 from itertools import chain, product
-from typing import Any, Callable, List, Literal, Optional, Union
+from typing import Any, Literal
 
 import numpy as np
 import torch
@@ -167,9 +167,9 @@ def minimum_dtype(*args):
 
 def minimum_autocast_precision(
     min_dtype: torch.dtype = torch.float32,
-    output: Optional[Union[Literal["low", "high"], torch.dtype]] = None,
-    which_args: Optional[List[int]] = None,
-    which_kwargs: Optional[List[str]] = None,
+    output: Literal["low", "high"] | torch.dtype | None = None,
+    which_args: list[int] | None = None,
+    which_kwargs: list[str] | None = None,
 ):
     """Decorator that ensures input tensors are autocast to a minimum precision.
 
@@ -248,8 +248,9 @@ def minimum_autocast_precision(
             }
 
             # Call function w/o autocast enabled
-            with torch.autocast(device_type="cuda", enabled=False), torch.autocast(
-                device_type="cpu", enabled=False
+            with (
+                torch.autocast(device_type="cuda", enabled=False),
+                torch.autocast(device_type="cpu", enabled=False),
             ):
                 outputs = func(*mod_args, **mod_kwargs)
 

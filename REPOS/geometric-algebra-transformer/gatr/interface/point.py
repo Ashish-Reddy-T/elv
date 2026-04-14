@@ -2,7 +2,6 @@
 # All rights reserved.
 """Functions that embed points in the geometric algebra."""
 
-
 import warnings
 
 import torch

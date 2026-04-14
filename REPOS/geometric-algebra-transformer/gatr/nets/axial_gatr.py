@@ -1,7 +1,6 @@
 # Copyright (c) 2023 Qualcomm Technologies, Inc.
 # All rights reserved.
 from dataclasses import replace
-from typing import Optional, Tuple, Union
 
 import torch
 from einops import rearrange
@@ -70,15 +69,15 @@ class AxialGATr(nn.Module):  # pylint: disable=duplicate-code
         in_mv_channels: int,
         out_mv_channels: int,
         hidden_mv_channels: int,
-        in_s_channels: Optional[int],
-        out_s_channels: Optional[int],
-        hidden_s_channels: Optional[int],
+        in_s_channels: int | None,
+        out_s_channels: int | None,
+        hidden_s_channels: int | None,
         attention: SelfAttentionConfig,
         mlp: MLPConfig,
         num_blocks: int = 20,
         checkpoint_blocks: bool = False,
-        pos_encodings: Tuple[bool, bool] = (False, False),
-        collapse_dims: Tuple[bool, bool] = (False, False),
+        pos_encodings: tuple[bool, bool] = (False, False),
+        collapse_dims: tuple[bool, bool] = (False, False),
         **kwargs,
     ) -> None:
         super().__init__()
@@ -116,10 +115,10 @@ class AxialGATr(nn.Module):  # pylint: disable=duplicate-code
     def forward(
         self,
         multivectors: Tensor,
-        scalars: Optional[Tensor] = None,
-        attention_mask: Optional[Tuple] = None,
-        join_reference: Union[Tensor, str] = "data",
-    ) -> Tuple[Tensor, Optional[Tensor]]:
+        scalars: Tensor | None = None,
+        attention_mask: tuple | None = None,
+        join_reference: Tensor | str = "data",
+    ) -> tuple[Tensor, Tensor | None]:
         """Forward pass of the network.
 
         Parameters

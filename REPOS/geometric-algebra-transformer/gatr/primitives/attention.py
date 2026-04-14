@@ -1,7 +1,7 @@
 # Copyright (c) 2023 Qualcomm Technologies, Inc.
 # All rights reserved.
 import math
-from typing import Callable, Optional, Tuple, Union
+from collections.abc import Callable
 
 import numpy as np
 import torch
@@ -42,7 +42,7 @@ def sdp_attention(
     q_s: Tensor,
     k_s: Tensor,
     v_s: Tensor,
-) -> Tuple[Tensor, Tensor]:
+) -> tuple[Tensor, Tensor]:
     """Equivariant geometric attention based on scaled dot products.
 
     Expects both multivector and scalar queries, keys, and values as inputs.
@@ -102,9 +102,9 @@ def pga_attention(
     q_s: Tensor,
     k_s: Tensor,
     v_s: Tensor,
-    weights: Optional[Tuple[Tensor, Tensor, Tensor]] = None,
+    weights: tuple[Tensor, Tensor, Tensor] | None = None,
     attention_mask=None,
-) -> Tuple[Tensor, Tensor]:
+) -> tuple[Tensor, Tensor]:
     """Equivariant geometric attention based on scaled dot products and the equivariant join.
 
     Expects both multivector and scalar queries, keys, and values as inputs.
@@ -168,9 +168,7 @@ def pga_attention(
     # ... then through the join...
     h = -join_norm(
         q_mv, k_mv, channel_sum=True, channel_weights=weights[1] if weights is not None else None
-    )[
-        ..., 0
-    ]  # (..., items_out, items_in)
+    )[..., 0]  # (..., items_out, items_in)
     attn_weights = attn_weights + h
 
     # ... and finally from auxiliary scalars
@@ -203,7 +201,7 @@ def pga_attention(
 
 
 @gatr_cache
-def _build_dist_basis(device, dtype) -> Tuple[Tensor, Tensor]:
+def _build_dist_basis(device, dtype) -> tuple[Tensor, Tensor]:
     """Compute basis features for queries and keys in the geometric SDP attention.
 
     Parameters
@@ -289,9 +287,9 @@ def geometric_attention(
     k_s: Tensor,
     v_s: Tensor,
     normalizer: Callable[[Tensor], Tensor],
-    weights: Optional[Tensor] = None,
-    attn_mask: Optional[Union[AttentionBias, Tensor]] = None,
-) -> Tuple[Tensor, Tensor]:
+    weights: Tensor | None = None,
+    attn_mask: AttentionBias | Tensor | None = None,
+) -> tuple[Tensor, Tensor]:
     """Equivariant geometric attention based on scaled dot products and nonlinear aux features.
 
     This is the main attention mechanism used in GATr. Thanks to the nonlinear features, the
@@ -434,7 +432,7 @@ def scaled_dot_product_attention(
     query: Tensor,
     key: Tensor,
     value: Tensor,
-    attn_mask: Optional[Union[AttentionBias, Tensor]] = None,
+    attn_mask: AttentionBias | Tensor | None = None,
 ) -> Tensor:
     """Execute (vanilla) scaled dot-product attention.
 

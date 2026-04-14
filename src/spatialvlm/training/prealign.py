@@ -10,6 +10,8 @@ import torch
 import torch.nn.functional as functional
 from torch.nn.utils import clip_grad_norm_
 
+from spatialvlm.training.sft import set_trainable_by_groups
+
 
 @dataclass(frozen=True)
 class PrealignConfig:
@@ -20,6 +22,10 @@ class PrealignConfig:
     max_grad_norm: float = 1.0
     ignore_index: int = -100
     projector_keywords: tuple[str, ...] = ("projector",)
+    # When non-None, `trainable_groups` overrides `projector_keywords` and
+    # the trainer uses `set_trainable_by_groups`. Stored as a tuple so the
+    # dataclass stays hashable/frozen.
+    trainable_groups: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -90,16 +96,20 @@ class PrealignmentTrainer:
         self.model = model
         self.config = config
 
-        freeze_all_parameters(self.model)
-        self.trainable_parameter_names = unfreeze_parameters_by_keyword(
-            self.model,
-            config.projector_keywords,
-        )
-        if len(self.trainable_parameter_names) == 0:
-            raise ValueError(
-                "No trainable parameters found for pre-alignment. "
-                f"Keywords={config.projector_keywords}"
+        if config.trainable_groups is not None:
+            self.trainable_parameter_names = set_trainable_by_groups(
+                self.model, config.trainable_groups
             )
+            selection_detail = f"groups={tuple(config.trainable_groups)}"
+        else:
+            freeze_all_parameters(self.model)
+            self.trainable_parameter_names = unfreeze_parameters_by_keyword(
+                self.model,
+                config.projector_keywords,
+            )
+            selection_detail = f"keywords={config.projector_keywords}"
+        if len(self.trainable_parameter_names) == 0:
+            raise ValueError(f"No trainable parameters found for pre-alignment. {selection_detail}")
 
         if optimizer is None:
             trainable = [p for p in self.model.parameters() if p.requires_grad]
@@ -113,12 +123,10 @@ class PrealignmentTrainer:
     def trainable_parameter_count(self) -> int:
         return sum(p.numel() for p in self.model.parameters() if p.requires_grad)
 
-    def step(self, batch: Mapping[str, Any]) -> PrealignStepOutput:
-        """Run one optimization step.
+    def forward_backward(self, batch: Mapping[str, Any], loss_scale: float = 1.0) -> float:
+        """Forward + backward without optimizer step (for gradient accumulation).
 
-        Batch keys:
-          - `labels`: Tensor[B, T]
-          - any other keys consumed by model forward
+        Returns the unscaled loss value.
         """
         if "labels" not in batch:
             raise KeyError("Prealignment batch must include `labels`.")
@@ -132,13 +140,24 @@ class PrealignmentTrainer:
         logits = outputs.logits if hasattr(outputs, "logits") else outputs["logits"]
         loss = masked_lm_loss(logits=logits, labels=labels, ignore_index=self.config.ignore_index)
 
-        self.optimizer.zero_grad(set_to_none=True)
-        loss.backward()
+        scaled = loss * loss_scale
+        scaled.backward()
+        return float(loss.detach().cpu().item())
+
+    def clip_and_step(self) -> float:
+        """Clip gradients, optimizer step, zero grads. Returns grad norm."""
         grad_norm = clip_grad_norm_(self.model.parameters(), max_norm=self.config.max_grad_norm)
         self.optimizer.step()
+        self.optimizer.zero_grad(set_to_none=True)
+        return float(grad_norm.detach().cpu().item())
 
+    def step(self, batch: Mapping[str, Any]) -> PrealignStepOutput:
+        """Full forward + backward + optimizer step (no accumulation)."""
+        self.optimizer.zero_grad(set_to_none=True)
+        loss_val = self.forward_backward(batch)
+        grad_norm_val = self.clip_and_step()
         return PrealignStepOutput(
-            loss=float(loss.detach().cpu().item()),
-            grad_norm=float(grad_norm.detach().cpu().item()),
+            loss=loss_val,
+            grad_norm=grad_norm_val,
             trainable_params=self.trainable_parameter_count(),
         )

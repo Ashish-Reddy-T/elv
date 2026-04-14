@@ -3,8 +3,8 @@
 """Unit tests of bilinear primitives."""
 
 import pytest
-
 from gatr.primitives.bilinear import geometric_product, outer_product
+
 from tests.helpers import (
     BATCH_DIMS,
     TOLERANCES,

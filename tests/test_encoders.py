@@ -81,6 +81,14 @@ class TestMLPProjector:
         assert x.grad is not None
         assert not torch.all(x.grad == 0)
 
+    def test_fp32_input_bf16_weights(self):
+        """Frozen fp32 encoder + bf16 projector (see train.py partial dtype cast)."""
+        proj = MLPProjector(in_dim=32, out_dim=64).to(dtype=torch.bfloat16)
+        x = torch.randn(1, 4, 32, dtype=torch.float32)
+        out = proj(x)
+        assert out.shape == (1, 4, 64)
+        assert out.dtype == torch.bfloat16
+
 
 class _IdentityBlock(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:

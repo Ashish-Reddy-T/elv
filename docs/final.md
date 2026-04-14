@@ -2,9 +2,9 @@
 
 ## What Has Been Built, Why It Was Built That Way, and What Remains
 
-**Date**: 2026-03-31
-**Test status**: 184 passed, 0 failed, 14 slow-marked deselected
-**Codebase**: 25 source modules, 26 test files, 4 config files
+**Date**: 2026-04-11 (updated)
+**Test status**: 196 passed, 0 failed, 14 slow-marked deselected
+**Codebase**: 25 source modules, 28 test files, 4 config files
 
 ---
 
@@ -13,23 +13,23 @@
 SpatialVLM is a 5-stage architecture that recovers destroyed spatial intelligence in vision-language models. Every module exists to fix a specific architectural failure point where standard VLMs silently discard 3D spatial information. The implementation is complete through all code modules (Stages 1-5, data pipeline, evaluation infrastructure). What remains is environment setup, training runs, and ablation experiments.
 
 ```
-RGB frame ──→ SigLIP2-SO400M/16 ──→ [B, 576, 4096]  (semantic)        ─────────┐
-         ──→ DINOv2-L/14        ──→ [B, 1369, 4096] (structural)      --───────┤
-                                                                               ├──→ SVA ──→ [B, 576, 4096]
+RGB frame ──→ SigLIP2-SO400M/16 ──→ [B, 576, 4096]   (semantic)       ─────────┐
+         ──→ DINOv2-L/14        ──→ [B, 1369, 4096]  (structural)     ────────┤
+                                                                               ├──→ SVA (1369 queries) ──→ [B, 1369, 4096]
 GT Depth ──→ Backproject+15%ile ──→ [B, 1369, 3] ──→ GATr ──→ [B, 1369, 4096] ─┘              │
-                                                      │                                  RMS Norm Match
-                                                pool 37×37 → 24×24                            │
-                                                GridCellRoPE3D ──→ [B, 576, 64]          [B, 576, 4096]
-                                                                         │                    │
-                                                                         └─── Qwen3-VL-8B ←───┘
-                                                                            + LoRA rank-32
-                                                                            + 9× Gated Cross-Attn (GQA)
-                                                                            + Position Routing
-                                                                                  │
-                                                                            Action + Reasoning
+                                         │                                               RMS Norm Match
+                                  IcosahedralRoPE3D ──→ [B, 1369, 96]                         │
+                                  (6 dirs × 8 freqs × sin/cos)                          [B, 1369, 4096]
+                                                              │                                │
+                                                              └──── Qwen3-VL-8B ←─────────────┘
+                                                                      + LoRA rank-32
+                                                                      + DeepStack (native, 0 params)
+                                                                      + RoPE monkey-patch
+                                                                              │
+                                                                        Action + Reasoning
 ```
 
-Trainable: ~583M parameters (6.6% of ~8,890M total). Frozen: SigLIP2, DINOv2, Qwen3-VL backbone.
+Trainable: ~206M parameters (2.3% of ~9,056M total). Frozen: SigLIP2, DINOv2, Qwen3-VL backbone.
 
 ---
 
@@ -88,7 +88,7 @@ Three functions implementing the geometry pipeline:
 
 2. `aggregate_patches_percentile(point_map, depth, patch_size=14, percentile=0.15)`: For each 14x14 patch (matching DINOv2's patch grid), ranks all 196 pixels by depth ascending, selects the pixel at the 15th percentile, and returns its 3D coordinates. Produces `[B, 1369, 3]`.
 
-3. `pool_positions_to_sva_grid(positions, source_h=37, source_w=37, target_h=24, target_w=24)`: Pools 1369 positions to 576 using `F.adaptive_avg_pool2d`. This ensures the 3D position assigned to each SVA query corresponds to the **same spatial sub-region** that the SVA query covers in cross-attention. Produces `[B, 576, 3]`.
+3. `pool_positions_to_sva_grid(positions, ...)`: **DEPRECATED** — no longer needed since SVA uses 1369 DINOv2-based queries (1:1 mapping). Previously pooled 1369 → 576 positions for the 576-query SVA design.
 
 **Camera Utilities** (`src/spatialvlm/utils/camera.py`)
 
@@ -108,13 +108,14 @@ The constructor verifies at init time that the installed GATr version uses `Geom
 
 Cached einsum is disabled by default (`enable_cached_einsum(False)`) due to compatibility issues with modern numpy stacks.
 
-**GridCellRoPE3D** (`src/spatialvlm/geometry/gridcell_rope3d.py`)
+**IcosahedralRoPE3D** (`src/spatialvlm/geometry/gridcell_rope3d.py`)
 
 Zero-parameter rotary position encoding for 3D spatial coordinates:
 
-- **4 tetrahedral directions**: Vertices of a regular tetrahedron on the unit sphere, satisfying the isotropy condition `sum(d_i @ d_i^T) = (4/3) I_3`. No direction in 3D is privileged.
-- **8 golden-ratio frequencies**: `f_k = 10.0 * phi^k` for `k=0..7`. The golden ratio is maximally irrational -- no two frequencies share a common period, minimizing aliasing. Range: 10cm detail to 2.91m room-scale.
-- **Output**: `4 dirs x 8 freqs x 2 (sin/cos) = 64 dimensions`, matching Qwen3-VL's 64 rotary pairs exactly. No projection layer needed.
+- **6 icosahedral directions**: Antipodal pairs from the 12 vertices of a regular icosahedron, satisfying the isotropy condition `Σ dᵢdᵢᵀ = 2·I₃`. No direction in 3D is privileged. Ablation H2f tests icosahedral (6 dirs) vs tetrahedral (4 dirs).
+- **8 e^(1/3)-spaced frequencies**: `f_k = 10.0 * e^(k/3)` for `k=0..7`. The ratio e^(1/3) ≈ 1.3956 is the optimal scale ratio for p=3 dimensions per the economy principle (Li et al. AAAI 2025). Range: ~10cm detail to ~14m room-scale.
+- **Output**: `6 dirs × 8 freqs × 2 (sin/cos) = 96 dimensions`. Padded to 128 with 16 identity pairs (cos=1, sin=0) → 48 + 16 = 64 rotary pairs matching Qwen3-VL's head_dim.
+- **No position pooling**: 1369 positions map 1:1 to SVA's 1369 DINOv2-based queries.
 
 All constants are stored as registered buffers (no learnable parameters). The encoding is a deterministic function of 3D position.
 
@@ -122,19 +123,20 @@ All constants are stored as registered buffers (no learnable parameters). The en
 
 **15th-percentile aggregation, not mean**: Mean depth within a 14x14 patch is biased toward distant backgrounds (far walls, open doorways, ceilings). A patch spanning a doorframe and open air has mean depth ~3.2m but 15th-percentile ~0.4m (the doorframe itself). GATr processing the correct 0.4m identifies the obstacle; processing 3.2m encodes phantom geometry. Robust to ~29 outlier pixels per 196-pixel patch.
 
-**SVA-aligned position pooling**: This is architecturally critical. After SVA fusion, only 576 tokens enter the LLM. GridCellRoPE3D needs `[B, 576, 3]` positions. These CANNOT be an arbitrary downsampling of the 1369 DINOv2-grid positions. The pooling uses `F.adaptive_avg_pool2d` which partitions the 37x37 source grid into 24x24 non-overlapping bins -- the **same spatial sub-regions** that SVA queries implicitly cover. This ensures each fused token's semantic content (from SVA cross-attention over a region) and its positional encoding (from GridCellRoPE3D) describe the same physical area. Breaking this invariant would mean a token "knows" about one part of the scene but claims to be somewhere else.
+**1:1 position-to-query mapping**: SVA now uses 1369 DINOv2-based queries (one per DINOv2 patch). Each backprojected 3D position maps directly to its corresponding SVA query — no pooling needed. Content (DINOv2 structural features fused with SigLIP semantics and GATr geometry via SVA cross-attention) and position (IcosahedralRoPE3D from the same patch's depth) describe the same physical area by construction. This eliminates the 37×37 → 24×24 compression bottleneck from the previous 576-query design.
 
 **GATr, not a standard transformer**: GATr processes 3D points equivariantly -- rotating the input point cloud rotates the output features correspondingly. This geometric inductive bias means the model doesn't need to learn rotation invariance from data. Equivariant linear layers use 9 learnable parameters per (in, out) pair vs. 256 for standard linear (28x more efficient).
 
-**Golden ratio spacing**: The golden ratio `phi = 1.618...` is maximally irrational, meaning the frequency ratios `f_k/f_j` are never close to simple rational numbers. This delays aliasing onset longer than any alternative (power-of-2, sqrt(e), etc.). Testable via ablation H2d.
+**e^(1/3) frequency spacing**: The ratio e^(1/3) ≈ 1.3956 is the optimal scale ratio for p=3 dimensions, derived from the economy principle (Li et al. AAAI 2025). For p dimensions, the optimal ratio is e^(1/p), giving denser frequency coverage than the golden ratio (φ ≈ 1.618, which is optimal for p=2). Testable via ablation H2d (e^(1/3) vs golden ratio vs power-of-2).
 
 ### Hypotheses tested
 
 - **H2a**: GATr features are complementary to vision encoder features
 - **H2b**: GridCellRoPE3D > M-RoPE for spatial tokens
 - **H2c**: GT depth vs. Depth Anything V2 gap (diagnostic only)
-- **H2d**: Golden ratio > other scale ratios
+- **H2d**: e^(1/3) ratio (optimal for 3D) > golden ratio (2D approx)
 - **H2e**: 15th-percentile > mean aggregation
+- **H2f**: 6 icosahedral dirs > 4 tetrahedral dirs
 
 ---
 
@@ -144,11 +146,11 @@ All constants are stored as registered buffers (no learnable parameters). The en
 
 **Spatial Vision Aggregator (SVA)** (`src/spatialvlm/fusion/sva.py`)
 
-Cross-attention module where 576 learnable query tokens attend to 3314 concatenated KV tokens:
+Cross-attention module where 1369 DINOv2-based query tokens attend to 3314 concatenated KV tokens:
 
 ```
 KV = concat([576 SigLIP, 1369 DINOv2, 1369 GATr]) = [B, 3314, 4096]
-Q  = siglip_tokens + learnable_query_embed          = [B, 576, 4096]
+Q  = dinov2_tokens + learnable_query_embed          = [B, 1369, 4096]
 ```
 
 Two cross-attention layers, each with:
@@ -157,9 +159,11 @@ Two cross-attention layers, each with:
 - `F.scaled_dot_product_attention` (uses Flash Attention when available)
 - Residual connection + post-LayerNorm
 
-**Typed attention bias**: A learned 3x3 scalar matrix over token source types (0=SigLIP, 1=DINOv2, 2=GATr). Added to attention logits as an additive mask. 9 parameters that prevent any single modality from dominating during early training.
+**Typed attention bias**: A learned 3×3 scalar matrix over token source types (0=SigLIP, 1=DINOv2, 2=GATr). Added to attention logits as an additive mask. 9 parameters that prevent any single modality from dominating during early training.
 
-**Design choice -- query initialization**: Queries are initialized as SigLIP tokens plus a learnable embedding (`self.query_embed`), rather than purely learnable tokens. This provides a strong starting point (SigLIP's semantic features) while the learnable component adapts during training. Eagle and Cambrian both use encoder features as query base.
+**Design choice -- DINOv2 query base**: Queries are initialized as DINOv2 tokens plus a learnable embedding (`self.query_embed`). DINOv2 owns the spatial layout — its 37×37 tokens form the structural skeleton onto which SigLIP semantics and GATr geometry are fused via KV cross-attention. This eliminates the 37×37 → 24×24 compression bottleneck of the previous 576-query design, giving 1:1 position-to-query mapping.
+
+**Diagnostic probe**: `return_attention_stats=True` activates an unfused attention path that reports per-layer, per-head attention mass on each source type (SigLIP/DINOv2/GATr). Zero overhead on the default training path. This directly measures "is SVA actually using geometry?" and unblocks all downstream decisions about fusion strategy.
 
 **RMS Norm Matching** (`src/spatialvlm/fusion/norm_matching.py`)
 
@@ -170,19 +174,13 @@ Scales vision token norms to match text token magnitude:
 - Zero learnable parameters
 - EMA state stored as `register_buffer` with in-place updates (`mul_` + `add_`) to ensure correct `state_dict` serialization and device movement
 
-**Gated Cross-Attention** (`src/spatialvlm/fusion/gated_cross_attn.py`)
+**DeepStack** (native Qwen3-VL mechanism, replaces gated cross-attention)
 
-Flamingo-style gated residual injection with GQA:
+Qwen3-VL's built-in DeepStack injects encoder intermediate features at early LLM layers via residual addition. Uses `visual_pos_masks` to identify spatial token positions within the sequence.
 
-```
-x <- x + tanh(alpha_attn) * CrossAttention(Q=x, KV=vision)
-x <- x + tanh(alpha_ff)   * FeedForward(x)
-```
-
-- **GQA**: 32 query heads, 8 KV heads (4:1 ratio matching Qwen3-VL). K/V projections are `Linear(4096, 1024)` (8 heads x 128 dim), not full `Linear(4096, 4096)`. KV heads are expanded via `unsqueeze(2).expand().reshape()` to match query head count.
-- **Zero-init gates**: `alpha_attn = alpha_ff = 0.0` at initialization. `tanh(0) = 0`, so the block is a pure passthrough at init -- the pretrained Qwen3 behavior is preserved exactly.
-- **9 injection points**: At Qwen3 layers {4, 8, 12, 16, 20, 24, 28, 32, 36} (every 4th of 36 layers)
-- ~41.9M parameters per layer, ~377M total across 9 layers
+- **Zero additional trainable parameters** — uses the backbone's native multi-layer feature routing
+- Gated cross-attention (`src/spatialvlm/fusion/gated_cross_attn.py`, ~378M params) was **REMOVED** in the icosahedral redesign
+- DeepStack achieves the same injection goal while saving ~378M trainable parameters
 
 ### Why this design
 
@@ -193,15 +191,14 @@ x <- x + tanh(alpha_ff)   * FeedForward(x)
 
 **Norm matching before injection**: "Beyond Semantics" (2024) measured vision token L2 norms at 10-100x text token norms. "Why Is Spatial Reasoning Hard for VLMs?" found that despite comprising ~90% of input, image tokens receive only ~10% of attention. Randomly permuting all 576 vision tokens causes only 0.2-2.74% drops. Our norm matching eliminates the magnitude imbalance so RoPE positional information isn't drowned out.
 
-**GQA in cross-attention**: Qwen3-VL uses 4:1 GQA natively. Matching this ratio in our injected cross-attention layers ensures architectural consistency and reduces KV cache overhead by 4x compared to standard MHA.
+**DeepStack over gated cross-attention**: Gated cross-attention (Flamingo-style, ~378M params) was replaced by Qwen3-VL's native DeepStack mechanism. DeepStack injects encoder intermediate features at early LLM layers via residual addition — achieving the same multi-layer injection with zero additional trainable parameters. This cut trainable params from ~584M to ~206M (2.3% of total).
 
 ### Hypotheses tested
 
-- **H3a**: Gated cross-attention > LLaVA concatenation by >5%
 - **H3b**: RMS norm matching adds measurable benefit
 - **H3c**: Permutation test: >15% drop (ours) vs. <3% (baseline)
-- **H3d**: Typed attention bias improves stability
 - **H3e**: 3314-token KV > 1728-token KV
+- **H3f**: DeepStack multi-layer injection > no injection
 
 ---
 
@@ -219,22 +216,22 @@ Lazy-loading wrapper around `Qwen/Qwen3-VL-8B-Instruct`:
 - **Lazy loading**: Model weights are not loaded until `load_model()` is called or `forward()` is first invoked, keeping memory free during module construction
 - **Stats tracking**: `Qwen3BackboneStats` dataclass reports total params, trainable params, LoRA rank, etc.
 
-**Position Routing** (`src/spatialvlm/backbone/position_routing.py`)
+**RoPE Monkey-Patch** (`src/spatialvlm/backbone/rope_patch.py`)
 
-`PositionRouter` dispatches positional encodings based on token type:
+Replaces position routing with a direct monkey-patch of Qwen3-VL's RoPE forward:
 
 - **Text tokens**: Standard M-RoPE with `mrope_section=[24, 20, 20]` (temporal, height, width). Sequential position IDs `[B, 3, T]`.
-- **Spatial tokens**: All 64 M-RoPE rotary pairs replaced with GridCellRoPE3D's 64-dim output. Physical 3D distance governs attention, not sequence position.
-- **Validation**: Constructor asserts `sum(mrope_section) == expected_spatial_rotary_dim == 64`
-- **Output**: `RoutedPositionBatch` dataclass containing combined tokens, spatial mask, text position IDs, and spatial RoPE3D encodings
+- **Spatial tokens**: 48 rotary pairs from IcosahedralRoPE3D (96 dims) + 16 identity pairs (cos=1, sin=0), padded to 64 total pairs matching head_dim=128. Physical 3D distance governs attention, not sequence position.
+- **Functions**: `patch_rope_forward()` replaces the model's RoPE computation, `patch_model_forward()` injects spatial embeddings, `apply_rope_patch()` applies both at once
+- Position routing module (`position_routing.py`) is **DEPRECATED**, replaced by this monkey-patch approach
 
 ### Why this design
 
 **LoRA, not full fine-tuning**: The 8B backbone has too many parameters for full fine-tuning within our compute budget. LoRA rank-32 provides sufficient adaptation capacity (~31M params) while keeping the pretrained knowledge intact. Rank-32 is chosen as a balance: rank-16 may be insufficient for learning new positional encoding semantics, rank-64 doubles the trainable params for diminishing returns.
 
-**Position routing, not uniform encoding**: Text tokens benefit from sequential M-RoPE (language coherence depends on word order). Spatial tokens benefit from 3D geometric RoPE (spatial reasoning depends on physical distance, not sequence position). Applying M-RoPE to spatial tokens would encode arbitrary sequence order as if it were physical location. Applying GridCellRoPE3D to text would destroy language coherence.
+**RoPE monkey-patch, not position routing**: Text tokens benefit from sequential M-RoPE (language coherence depends on word order). Spatial tokens benefit from 3D geometric RoPE (spatial reasoning depends on physical distance, not sequence position). The monkey-patch approach directly replaces Qwen3-VL's RoPE computation for spatial tokens, avoiding the overhead of a separate routing module.
 
-**Exact 64-dim match**: GridCellRoPE3D outputs 64 dimensions (4x8x2) which exactly equals Qwen3's 64 rotary pairs (sum of mrope_section [24,20,20]). This means no adapter layer is needed -- the encoding slots directly into the existing RoPE computation. One fewer learned projection means one fewer source of error.
+**96→128 dim padding**: IcosahedralRoPE3D outputs 96 dimensions (6×8×2 = 48 rotary pairs). Qwen3's head_dim=128 needs 64 rotary pairs. The remaining 16 pairs are set to identity (cos=1, sin=0), meaning those dimensions see no positional modulation. This is a clean, zero-parameter solution — no adapter layer needed.
 
 ---
 
@@ -252,7 +249,9 @@ Lazy-loading wrapper around `Qwen/Qwen3-VL-8B-Instruct`:
 
 - `SFTTrainer` with label smoothing support
 - `set_trainable_by_keyword()` selectively unfreezes modules matching name patterns
-- All 583M trainable parameters active
+- All ~206M trainable parameters active (projectors + GATr + SVA + LoRA)
+- `set_trainable_by_groups()` supports per-stream freeze control for staged training
+- `trainable_groups` config override enables GATr-first → DINO-second → all-combined schedules
 
 **GRPO** (`src/spatialvlm/training/grpo.py`)
 
@@ -431,10 +430,12 @@ Every pre-trained model constant is marked with `# ⚠ VERIFY` comments. Compute
 | Geometry math | ~35 | Backprojection shapes, percentile aggregation, SVA-aligned pooling, GridCellRoPE3D dimensions and equivariance, camera utils |
 | GATr wrapper | ~8 | Output shapes, invariant dimensions, improved PGA verification |
 | SVA fusion | ~6 | Output shapes, typed bias matrix, padding mask handling |
-| Gated cross-attn | ~7 | GQA 4:1 ratio, KV projection shapes, zero-init passthrough |
+| SVA attention probe | ~12 | Probe structure, fractions sum to 1.0, numerical parity with SDPA, gradient flow |
+| Gated cross-attn | ~7 | DEPRECATED (skipped, kept for ablation reference) |
 | Norm matching | ~5 | EMA updates, scaling behavior, buffer persistence |
 | Training losses | ~15 | GRPO clipping, advantage normalization, fDPO segment-specific betas, reward computation |
-| Position routing | ~6 | M-RoPE shape, spatial mask, dimension validation |
+| Freeze groups | ~13 | Per-stream group coverage, union behavior, SFT/Prealign trainer integration |
+| RoPE monkey-patch | ~6 | cos/sin shapes, identity padding, singleton, config alignment |
 | Encoders | ~6 | Hook registration, multi-layer extraction (slow: require model download) |
 | Data pipeline | ~10 | Dataset loading, preprocessing shapes, Habitat wrapper |
 | Eval infra | ~15 | Permutation test, metrics, ablation specs, benchmark validation |
@@ -449,13 +450,13 @@ These are properties that must hold across the entire pipeline. Each was verifie
 
 2. **Spatial co-registration**: DINOv2 tokens and GATr tokens share the same 37x37 spatial grid. Token (i,j) from each describes the same image region.
 
-3. **Content-position consistency**: SVA query (i,j) covers a spatial sub-region of the 37x37 grid. GridCellRoPE3D position for query (i,j) is the mean of source positions in that same sub-region. Content and position describe the same physical area.
+3. **Content-position consistency**: SVA query (i,j) is one DINOv2 patch token. IcosahedralRoPE3D position for that same query is the backprojected 15th-percentile depth of the corresponding 14×14 pixel region. Content and position describe the same physical area by construction (1:1 mapping).
 
-4. **Rotary dimension match**: GridCellRoPE3D outputs 64 dims = Qwen3's 64 rotary pairs = sum([24, 20, 20]). No adapter needed.
+4. **Rotary dimension match**: IcosahedralRoPE3D outputs 96 dims (48 rotary pairs) + 16 identity pairs = 64 total rotary pairs = Qwen3's sum([24, 20, 20]). No adapter needed.
 
-5. **GQA ratio match**: Gated cross-attention uses 32:8 Q:KV heads, matching Qwen3-VL's native ratio.
+5. **DeepStack replaces gated cross-attention**: Native Qwen3-VL mechanism injects encoder features at early LLM layers with zero additional trainable parameters.
 
-6. **Zero-init passthrough**: At initialization, gated cross-attention gates are 0, so the model behaves exactly as pretrained Qwen3.
+6. **Per-stream freeze groups**: `set_trainable_by_groups()` enables staged training (siglip_proj, dino_proj, gatr, sva, lora) without code changes — expressible as a sequence of config flags.
 
 7. **Device agnosticism**: No module hardcodes `cuda`. All tensors inherit device from inputs or explicit `device` parameters.
 
@@ -508,9 +509,10 @@ All 15 ablation variants specified in `src/spatialvlm/eval/phase9.py`:
 - [ ] SigLIP only (H1a)
 - [ ] DINOv2 only (H1a)
 - [ ] DINOv2 pooled to 576 (H1d, H3e)
-- [ ] Concatenation fusion (H3a)
+- [ ] Concatenation fusion (no SVA cross-attn)
 - [ ] No RMS norm matching (H3b)
-- [ ] No typed attention bias (H3d)
+- [ ] DeepStack injection vs no injection (H3f)
+- [ ] Icosahedral vs tetrahedral directions (H2f)
 - [ ] SFT only, no GRPO (H5a)
 - [ ] Permutation test (H3c)
 - [ ] GT vs. estimated depth (H2c)
@@ -541,14 +543,15 @@ src/spatialvlm/
 ├── geometry/
 │   ├── backproject.py              # Depth->3D, 15th-pct aggregation, SVA pooling
 │   ├── gatr_wrapper.py             # GATr 8-block PGA transformer
-│   └── gridcell_rope3d.py          # Tetrahedral Fourier RoPE (zero params)
+│   └── gridcell_rope3d.py          # IcosahedralRoPE3D (6 dirs, e^(1/3), zero params)
 ├── fusion/
-│   ├── sva.py                      # 576-query SVA (3314 KV, typed bias)
+│   ├── sva.py                      # 1369-query SVA (DINOv2 base, 3314 KV, typed bias, diagnostic probe)
 │   ├── norm_matching.py            # RMS norm EMA matching (zero params)
-│   └── gated_cross_attn.py         # Flamingo-style + GQA (32:8 heads)
+│   └── gated_cross_attn.py         # DEPRECATED (replaced by DeepStack)
 ├── backbone/
 │   ├── qwen3_vl.py                 # Qwen3-VL-8B + LoRA + PEFT workaround
-│   └── position_routing.py         # M-RoPE / GridCellRoPE3D dispatch
+│   ├── rope_patch.py               # RoPE monkey-patch (IcosahedralRoPE3D injection)
+│   └── position_routing.py         # DEPRECATED (replaced by rope_patch.py)
 ├── training/
 │   ├── prealign.py                 # Stage 1: projector-only SFT
 │   ├── sft.py                      # Stage 2: full SFT
@@ -570,7 +573,7 @@ src/spatialvlm/
 └── utils/
     └── camera.py                   # Pinhole intrinsics + backprojection
 
-tests/  (26 files, 184 passing tests)
+tests/  (28 files, 196 passing tests)
 configs/  (train.yaml, eval.yaml, model.yaml)
 ```
 
