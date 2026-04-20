@@ -65,7 +65,7 @@
 - [x] `scripts/generate_synthetic_frames.py` — synthetic frames for pipeline testing
 - [x] `scripts/smoke_test.py` — stage-by-stage forward-pass verification
 - [x] `backbone/rope_patch.py` — DeepStack embedding injection via forward hook
-- [ ] `scripts/render_training_frames.py` — Habitat frame caching for prealign + SFT
+- [x] `scripts/render_training_frames.py` — Habitat frame caching for prealign + SFT
 
 ## Phase 7: Training Pipeline
 - [x] `src/spatialvlm/training/prealign.py` — Stage 1: projectors only (~77M), Habitat frames
