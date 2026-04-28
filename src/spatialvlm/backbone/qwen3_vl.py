@@ -192,6 +192,22 @@ class Qwen3VLBackbone(nn.Module):
         if self._freeze_base_model:
             self.freeze_all_parameters()
 
+        # Apply RoPE patch to the BASE model before PEFT wrapping.
+        # apply_rope_patch expects model.model.language_model.rotary_emb which only
+        # exists on Qwen3VLForConditionalGeneration, not on PeftModel.
+        if self._apply_spatial_rope:
+            try:
+                from spatialvlm.backbone.rope_patch import apply_rope_patch
+
+                apply_rope_patch(self.model)
+                print("[INFO rope_patch] apply_rope_patch succeeded on base model.", flush=True)
+            except AttributeError as e:
+                # Raise instead of silently swallowing — a silent failure here means
+                # visual features are never injected, which breaks everything.
+                raise RuntimeError(
+                    f"apply_rope_patch failed on base model — model structure mismatch: {e}"
+                ) from e
+
         if self._enable_lora:
             peft_model_factory = self._peft_model_factory
             lora_config_factory = self._lora_config_factory
@@ -221,16 +237,6 @@ class Qwen3VLBackbone(nn.Module):
         params_touched = 0
         if self._apply_peft_2880_workaround:
             modules_touched, params_touched = self.enable_peft_2880_workaround()
-
-        if self._apply_spatial_rope:
-            try:
-                from spatialvlm.backbone.rope_patch import apply_rope_patch
-
-                apply_rope_patch(self.model)
-            except AttributeError:
-                # Model structure doesn't match Qwen3-VL (e.g., mock/test model).
-                # Skip rope patching silently — it will be applied when a real model loads.
-                pass
 
         self._stats = Qwen3BackboneStats(
             trainable_params=self._count_trainable_params(),
@@ -270,9 +276,16 @@ class Qwen3VLBackbone(nn.Module):
         self.load_model()
         if self.model is None:
             raise RuntimeError("Qwen3 model is unavailable. Call load_model() before forward().")
-        # Strip SpatialVLM kwargs before PEFT/HF — avoids duplicate ``deepstack_visual_embeds``
-        # when Qwen3VLModel forwards ``deepstack_visual_embeds=<local>`` and ``**kwargs``.
+        # Strip SpatialVLM kwargs and stash for RoPE/DeepStack hooks.
+        # Must use the BASE model (Qwen3VLForConditionalGeneration), not the PeftModel
+        # wrapper — the hooks and patched forward are registered on the base model's
+        # attributes (model.model.language_model.rotary_emb, embed_tokens hook).
         from spatialvlm.backbone.rope_patch import stash_spatial_forward_kwargs
 
-        stash_spatial_forward_kwargs(self.model, kwargs)
+        try:
+            from peft import PeftModel as _PeftModel
+            _base = self.model.model if isinstance(self.model, _PeftModel) else self.model
+        except ImportError:
+            _base = self.model
+        stash_spatial_forward_kwargs(_base, kwargs)
         return self.model(*args, **kwargs)

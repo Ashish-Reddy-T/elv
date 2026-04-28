@@ -93,8 +93,11 @@ def _build_icosahedral_cos_sin(
 
     # Duplicate to match RoPE convention: [cos, cos] for full head_dim
     # Qwen3-VL does: emb = cat((freqs, freqs), dim=-1) -> cos/sin of shape [B, S, head_dim]
-    cos_out = torch.cat([cos_vals, cos_vals], dim=-1)  # [B, N, 128]
-    sin_out = torch.cat([sin_vals, sin_vals], dim=-1)  # [B, N, 128]
+    # cos_out = torch.cat([cos_vals, cos_vals], dim=-1)  # [B, N, 128]
+    # sin_out = torch.cat([sin_vals, sin_vals], dim=-1)  # [B, N, 128]
+
+    cos_out = torch.repeat_interleave(cos_vals, 2, dim=-1) # [B, N, 128]
+    sin_out = torch.repeat_interleave(sin_vals, 2, dim=-1) # [B, N, 128]
 
     return cos_out.to(dtype=dtype), sin_out.to(dtype=dtype)
 
@@ -103,64 +106,67 @@ def patch_rope_forward(
     original_forward: Any,
     rotary_emb_self: Any,
     x: torch.Tensor,
-    position_ids: torch.Tensor,
+    *args: Any,
+    **kwargs: Any,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Patched Qwen3VLTextRotaryEmbedding.forward().
-
-    Computes standard M-RoPE, then overwrites spatial token positions with
-    icosahedral cos/sin. No-op if no spatial coordinates are stashed.
-
-    Parameters
-    ----------
-    original_forward : callable
-        The original Qwen3VLTextRotaryEmbedding.forward method.
-    rotary_emb_self : Qwen3VLTextRotaryEmbedding
-        The rotary embedding module instance (has stashed attributes).
-    x : Tensor
-        Hidden states (for dtype/device reference).
-    position_ids : Tensor[3, B, seq_len]
-        M-RoPE position IDs.
-
-    Returns
-    -------
-    cos, sin : Tensor[B, seq_len, head_dim]
-        Position embeddings with spatial positions overwritten.
+    
+    Ensures 3D icosahedral RoPE is applied to all layers during prefill
+    without clearing stashed data prematurely.
     """
-    # Step 1: Standard M-RoPE for all tokens
-    cos, sin = original_forward(x, position_ids)  # [B, seq_len, head_dim]
+    # 1. Run the original M-RoPE first
+    cos, sin = original_forward(x, *args, **kwargs)
 
-    # Step 2: Check for stashed spatial data
+    # 2. Retrieve stashed data
     spatial_coords = getattr(rotary_emb_self, "_spatial_coords_3d", None)
     spatial_mask = getattr(rotary_emb_self, "_spatial_token_mask", None)
 
+    # 3. Check for presence of data
     if spatial_coords is None or spatial_mask is None:
+        print(spatial_coords is None, spatial_mask is None)
+        print("earliest exit")
         return cos, sin
 
-    # spatial_mask: [B, seq_len] bool — True at spatial token positions
-    # spatial_coords: [B, N_spatial, 3] — 3D coordinates for spatial tokens
-    if not spatial_mask.any():
-        return cos, sin
+    # 4. Determine Phase: Prefill vs. Decoding
+    # cos shape is [B, seq_len, head_dim]
+    current_seq_len = cos.shape[1]
+    stashed_seq_len = spatial_mask.shape[1]
 
-    # Step 3: Compute icosahedral cos/sin for spatial positions
-    head_dim = cos.shape[-1]
-    ico_cos, ico_sin = _build_icosahedral_cos_sin(
-        spatial_coords, head_dim=head_dim, dtype=cos.dtype
-    )  # [B, N_spatial, head_dim]
+    # Only apply icosahedral logic if we are in the Prefill phase 
+    # (where sequence lengths match). During decoding, current_seq_len is 1.
+    if current_seq_len == stashed_seq_len:
+        if not spatial_mask.any():
+            print('returning because not spatial_mask.any()')
+            return cos, sin
 
-    # Step 4: Overwrite spatial positions in the full cos/sin tensors
-    # spatial_mask: [B, seq_len] -> expand to [B, seq_len, head_dim]
-    cos = cos.clone()
-    sin = sin.clone()
-    mask_expanded = spatial_mask.unsqueeze(-1).expand_as(cos)  # [B, seq_len, head_dim]
-    cos[mask_expanded] = ico_cos.reshape(-1)
-    sin[mask_expanded] = ico_sin.reshape(-1)
+        # # Compute icosahedral cos/sin
+        head_dim = cos.shape[-1]
+        ico_cos, ico_sin = _build_icosahedral_cos_sin(
+            spatial_coords * 0.01, # <--- Scale here
+            head_dim=head_dim, 
+            dtype=cos.dtype
+        )
+        # Overwrite spatial positions
+        cos = cos.clone()
+        sin = sin.clone()
+        
+        # Expand mask to [B, seq_len, head_dim]
+        mask_expanded = spatial_mask.unsqueeze(-1).expand_as(cos)
+        
+        # In-place update for the prefill tokens
+        cos[mask_expanded] = ico_cos.reshape(-1)
+        sin[mask_expanded] = ico_sin.reshape(-1)
 
-    # Step 5: Clear stashed data to avoid stale references
-    rotary_emb_self._spatial_coords_3d = None
-    rotary_emb_self._spatial_token_mask = None
+        print(f"DEBUG: Max Ico Theta: {torch.acos(ico_cos).max().item():.4f}")
+        print(f"DEBUG: Max Orig Theta: {torch.acos(cos[mask_expanded]).max().item():.4f}")
 
+    # CRITICAL: We do NOT clear rotary_emb_self._spatial_coords_3d here.
+    # Because this module is shared across layers, clearing it here would
+    # prevent Layer 1, 2, 3... from seeing the data.
+    # The attributes should be cleared manually after model.generate() returns.
+
+    print('returning end of function')
     return cos, sin
-
 
 def _deepstack_embedding_hook(
     module: Any,
@@ -184,40 +190,53 @@ def _deepstack_embedding_hook(
 
 
 def stash_spatial_forward_kwargs(model_self: Any, kwargs: dict[str, Any]) -> None:
-    """Pop SpatialVLM-only kwargs and stash for RoPE / DeepStack hooks.
-
-    Qwen3VLModel.forward passes ``deepstack_visual_embeds=<local>`` and ``**kwargs``
-    into the text stack; if ``kwargs`` still contains ``deepstack_visual_embeds``,
-    Python raises "multiple values for keyword argument". Call this on the outer
-    Peft / HF model **before** any forward so those keys never reach Qwen3VLModel.
-
-    Safe to call twice on the same ``kwargs`` dict (second call is a no-op).
     """
-    if not any(
-        k in kwargs for k in ("spatial_coords_3d", "spatial_token_mask", "deepstack_visual_embeds")
-    ):
-        return
+    Robustly stashes spatial data onto all relevant submodules.
+    Uses .get() instead of .pop() to ensure data persists across multiple 
+    internal calls during the generation loop.
+    """
+    # 1. Extract data without destroying the dictionary
+    new_coords = kwargs.get("spatial_coords_3d", None)
+    new_mask = kwargs.get("spatial_token_mask", None)
+    new_visual_embeds = kwargs.get("deepstack_visual_embeds", None)
 
-    spatial_coords_3d = kwargs.pop("spatial_coords_3d", None)
-    spatial_token_mask = kwargs.pop("spatial_token_mask", None)
-    deepstack_visual_embeds = kwargs.pop("deepstack_visual_embeds", None)
+    # 2. Guard Clause: If this is a subsequent call with no new data,
+    # do NOT proceed, as we don't want to overwrite valid data with None.
+    if new_coords is None and new_mask is None and new_visual_embeds is None:
+        return 
 
-    if spatial_token_mask is None and spatial_coords_3d is not None:
+    # 3. Derive mask if it's missing but coords exist (fallback)
+    if new_mask is None and new_coords is not None:
         mm_token_type_ids = kwargs.get("mm_token_type_ids", None)
         if mm_token_type_ids is not None:
-            spatial_token_mask = mm_token_type_ids == SPATIAL_TOKEN_TYPE_ID
+            # SPATIAL_TOKEN_TYPE_ID should be defined in your global scope (e.g., 3)
+            new_mask = (mm_token_type_ids == SPATIAL_TOKEN_TYPE_ID)
 
-    try:
-        rotary_emb = model_self.model.language_model.rotary_emb
-        rotary_emb._spatial_coords_3d = spatial_coords_3d
-        rotary_emb._spatial_token_mask = spatial_token_mask
-        if deepstack_visual_embeds is not None and spatial_token_mask is not None:
+    # 4. Global Broadcast: Iterate through all submodules
+    # This ensures PEFT wrappers or nested language models are all tagged.
+    count = 0
+    for m in model_self.modules():
+        c_name = m.__class__.__name__.lower()
+        # Look for anything that resembles a Rotary Embedding
+        if "rotary" in c_name or "rope" in c_name:
+            if new_coords is not None:
+                m._spatial_coords_3d = new_coords
+            if new_mask is not None:
+                m._spatial_token_mask = new_mask
+            count += 1
+            
+    # 5. Handle Word Embeddings (for the DeepStack/VLM hook)
+    if new_visual_embeds is not None:
+        try:
             embed_module = _find_embed_tokens(model_self)
-            embed_module._deepstack_visual_embeds = deepstack_visual_embeds
-            embed_module._deepstack_spatial_mask = spatial_token_mask
-    except AttributeError:
-        pass
+            embed_module._deepstack_visual_embeds = new_visual_embeds
+            if new_mask is not None:
+                embed_module._deepstack_spatial_mask = new_mask
+        except Exception as e:
+            print(f"DEBUG: Failed to stash visual embeds on embedding layer: {e}")
 
+    print(f"DEBUG: Stashed spatial data on {count} RoPE modules.")
+    print(f"DEBUG: Mask provided: {new_mask is not None}, Coords provided: {new_coords is not None}")
 
 def patch_model_forward(
     original_forward: Any,

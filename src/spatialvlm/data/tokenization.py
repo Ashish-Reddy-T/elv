@@ -1,8 +1,15 @@
 """Tokenization utilities: build input_ids with spatial placeholders and labels.
 
-Two formats supported:
-  - **prealign**: ``[BOS] <instruction> [SPATIAL×1369] <caption> [EOS]``
-  - **sft**:      ``[BOS] <system> <instruction> [SPATIAL×1369] <reasoning+action> [EOS]``
+Three formats, controlled by whether ``target`` is passed to ``build_input_ids``:
+
+  - **prealign (no caption)**:  ``Observation: [SPATIAL×N] \\n\\nInstruction: {text} [EOS]``
+    Spatial tokens come first so every instruction token attends to them.
+    Loss on instruction + EOS only.
+
+  - **prealign (with caption)** / **sft**:
+    ``{system} Instruction: {text} Observation: [SPATIAL×N] \\n\\n{target} [EOS]``
+    ``target`` is the MP3D scene caption (prealign) or reasoning+action (SFT).
+    Loss on target + EOS only.
 
 Spatial placeholder tokens are replaced at runtime by the DeepStack embedding
 hook in ``backbone/rope_patch.py``.  Their token IDs must occupy exactly
@@ -68,9 +75,9 @@ def build_input_ids(
     instruction : str
         The navigation instruction or question.
     target : str | None
-        Target response (for SFT).  When ``None`` the labels are all
-        ``ignore_index`` (pre-alignment captioning loss is applied
-        to the full sequence externally).
+        Target response (for SFT).  When ``None``, uses prealign format:
+        spatial tokens come first so that the instruction prediction is
+        conditioned on the spatial context (rich gradient signal to projectors).
     config : SpatialTokenizerConfig | None
         Override defaults.
 
@@ -86,52 +93,55 @@ def build_input_ids(
         config = SpatialTokenizerConfig()
 
     placeholder_id = _resolve_placeholder_id(tokenizer, config.spatial_placeholder)
-
-    # --- Prefix: system + instruction ---
-    prefix_text = f"{config.system_prompt}\n\nInstruction: {instruction}\n\nObservation:"
-    prefix_ids: list[int] = tokenizer.encode(prefix_text, add_special_tokens=True)
-
-    # --- Spatial placeholder block ---
-    spatial_ids = [placeholder_id] * config.num_spatial_tokens
-    spatial_start_idx = len(prefix_ids)
-
-    # --- Suffix / target ---
-    if target is not None:
-        suffix_text = f"\n\n{target}"
-        # encode without BOS — it's a continuation
-        suffix_ids: list[int] = tokenizer.encode(suffix_text, add_special_tokens=False)
-    else:
-        suffix_ids = []
-
-    # Add EOS
     eos_id = getattr(tokenizer, "eos_token_id", None)
-    if eos_id is not None:
-        suffix_ids.append(eos_id)
 
-    # --- Assemble ---
-    all_ids = prefix_ids + spatial_ids + suffix_ids
-
-    # Truncate to max_length
-    if len(all_ids) > config.max_length:
-        all_ids = all_ids[: config.max_length]
-
-    seq_len = len(all_ids)
-    input_ids = torch.tensor(all_ids, dtype=torch.long)
-    attention_mask = torch.ones(seq_len, dtype=torch.long)
-
-    # --- Labels ---
-    labels = torch.full((seq_len,), config.ignore_index, dtype=torch.long)
     if target is not None:
-        # Only the suffix (target response + EOS) contributes to loss
+        # --- SFT format: [system + instruction] [spatial×N] [target] [EOS] ---
+        # Loss on target + EOS only.
+        prefix_text = f"{config.system_prompt}\n\nInstruction: {instruction}\n\nObservation:"
+        prefix_ids: list[int] = tokenizer.encode(prefix_text, add_special_tokens=True)
+        spatial_ids = [placeholder_id] * config.num_spatial_tokens
+        spatial_start_idx = len(prefix_ids)
+        suffix_text = f"\n\n{target}"
+        suffix_ids: list[int] = tokenizer.encode(suffix_text, add_special_tokens=False)
+        if eos_id is not None:
+            suffix_ids.append(eos_id)
+
+        all_ids = prefix_ids + spatial_ids + suffix_ids
+        if len(all_ids) > config.max_length:
+            all_ids = all_ids[: config.max_length]
+        seq_len = len(all_ids)
+        input_ids = torch.tensor(all_ids, dtype=torch.long)
+        labels = torch.full((seq_len,), config.ignore_index, dtype=torch.long)
         target_start = spatial_start_idx + config.num_spatial_tokens
         labels[target_start:] = input_ids[target_start:]
-    else:
-        # Prealign: autoregressive loss on entire sequence (except spatial block)
-        labels[:] = input_ids
-        labels[spatial_start_idx : spatial_start_idx + config.num_spatial_tokens] = (
-            config.ignore_index
-        )
 
+    else:
+        # --- Prealign format: Observation: [spatial×N] [instruction] [EOS] ---
+        # Spatial tokens come BEFORE the instruction so that every instruction
+        # token's prediction is conditioned on the spatial context.  Loss is
+        # computed on the instruction + EOS only, giving a rich gradient signal
+        # back through the spatial projectors.
+        prefix_text = "Observation:"
+        prefix_ids = tokenizer.encode(prefix_text, add_special_tokens=True)
+        spatial_ids = [placeholder_id] * config.num_spatial_tokens
+        spatial_start_idx = len(prefix_ids)
+        suffix_text = f"\n\nInstruction: {instruction}"
+        suffix_ids = tokenizer.encode(suffix_text, add_special_tokens=False)
+        if eos_id is not None:
+            suffix_ids.append(eos_id)
+
+        all_ids = prefix_ids + spatial_ids + suffix_ids
+        if len(all_ids) > config.max_length:
+            all_ids = all_ids[: config.max_length]
+        seq_len = len(all_ids)
+        input_ids = torch.tensor(all_ids, dtype=torch.long)
+        labels = torch.full((seq_len,), config.ignore_index, dtype=torch.long)
+        target_start = spatial_start_idx + config.num_spatial_tokens
+        # Only predict instruction + EOS (the part conditioned on spatial tokens)
+        labels[target_start:] = input_ids[target_start:]
+
+    attention_mask = torch.ones(seq_len, dtype=torch.long)
     return {
         "input_ids": input_ids,
         "labels": labels,

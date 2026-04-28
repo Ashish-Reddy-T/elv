@@ -177,9 +177,11 @@ class CachedFrameDataset(Dataset):
         rgb:          Tensor[3, H, W]    float32, [0,1]
         depth:        Tensor[H, W]       float32, metric metres
         instruction:  str
+        step_idx:     int
     Optional keys:
         intrinsics:   dict  (fx, fy, cx, cy, width, height)
-        target:       str   (for SFT — reasoning + action)
+        caption:      str   (MP3D semantic caption — prealign stage)
+        target:       str   (SFT only — "Reasoning: ... Action: MOVE_FORWARD/STOP")
         episode_id:   str
         source:       str   (r2r-ce, rxr-ce, sqa3d)
     """
@@ -192,7 +194,7 @@ class CachedFrameDataset(Dataset):
         self.frame_dir = Path(frame_dir)
         if not self.frame_dir.is_dir():
             raise FileNotFoundError(f"Frame directory not found: {self.frame_dir}")
-        self._paths = sorted(self.frame_dir.glob("*.pt"))
+        self._paths = sorted(self.frame_dir.rglob("*.pt"))
         if limit is not None:
             self._paths = self._paths[:limit]
 

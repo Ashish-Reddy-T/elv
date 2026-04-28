@@ -124,7 +124,10 @@ class IcosahedralRoPE3D(nn.Module):
             Layout: [sin(d_1.p.f_0), cos(d_1.p.f_0), sin(d_1.p.f_1), cos(d_1.p.f_1), ...]
         """
         # positions: [B, N, 3]
-        # directions: [6, 3]
+        # directions: [6, 3] (float32 buffers)
+        # Cast to float32 for numerical stability; buffers are always float32.
+        orig_dtype = positions.dtype
+        positions = positions.float()
 
         # Scalar projections: dot each position with each icosahedral direction
         # projections[b, n, i] = d_i . p_{b,n}
@@ -141,7 +144,7 @@ class IcosahedralRoPE3D(nn.Module):
         enc = torch.stack([sin_enc, cos_enc], dim=-1)  # [B, N, 6, 8, 2]
         enc = enc.reshape(*positions.shape[:2], self.N_DIRS * self.N_FREQS * 2)  # [B, N, 96]
 
-        return enc
+        return enc.to(orig_dtype)
 
 
 # Backward-compatible alias for code that references the old name

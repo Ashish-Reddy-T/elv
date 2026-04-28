@@ -66,21 +66,29 @@ class RMSNormMatching(nn.Module):
         """
         original_dtype = vision_tokens.dtype
 
-        if text_tokens is not None and self.training:
+        if text_tokens is not None:
             # RMS norm per text token: sqrt(mean(x², dim=-1)) → [B, T]
             text_rms_per_token = text_tokens.float().pow(2).mean(dim=-1).sqrt()  # [B, T]
             # Mean RMS over the batch
             batch_text_rms = text_rms_per_token.mean()  # scalar
 
-            # EMA update (in-place to preserve registered buffer for state_dict/device)
-            self.text_rms_ema.mul_(self.ema_momentum).add_(
-                (1.0 - self.ema_momentum) * batch_text_rms.detach()
-            )
+            if self.training:
+                # EMA update (in-place to preserve registered buffer for state_dict/device)
+                self.text_rms_ema.mul_(self.ema_momentum).add_(
+                    (1.0 - self.ema_momentum) * batch_text_rms.detach()
+                )
+
+            # Use the actual current batch text RMS directly — avoids stale EMA
+            # from an earlier training stage with different token distributions.
+            target_rms = batch_text_rms
+        else:
+            # Inference with no text tokens available: fall back to stored EMA
+            target_rms = self.text_rms_ema
 
         # RMS of the current vision tokens (mean over all tokens and batch)
         vision_rms = vision_tokens.float().pow(2).mean(dim=-1).sqrt().mean()  # scalar
 
         # Scale factor: text magnitude / vision magnitude
-        scale = self.text_rms_ema / (vision_rms + self.eps)
+        scale = target_rms / (vision_rms + self.eps)
 
         return (vision_tokens.float() * scale).to(original_dtype)

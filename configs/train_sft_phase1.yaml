@@ -8,21 +8,22 @@ model:
   lora_alpha: 64
 
 training:
-  epochs: 2
+  epochs: 1
   batch_size: 1
   grad_accum_steps: 32       # effective batch = 1 * 32 * 4 GPUs = 128
   learning_rate: 5.0e-5
   weight_decay: 0.01
   max_grad_norm: 1.0
-  warmup_ratio: 0.03         # 3% of total steps as linear warmup
+  warmup_ratio: 0.03
   ignore_index: -100
   label_smoothing: 0.0
   gradient_checkpointing: true
-  # Phase 2: all groups including siglip_proj. Run after train_sft_phase1.yaml.
+  # Geometric pathway only — siglip_proj stays frozen at prealign initialization.
+  # SVA still sees SigLIP tokens (they're meaningful from prealign) but doesn't update that mapping.
+  # Phase 2 (train_sft.yaml) unfreezes siglip_proj once GATr+DINOv2 pathway has stabilized.
   trainable_groups:
-    - siglip_proj
-    - dino_proj
     - gatr
+    - dino_proj
     - sva
     - lora
 
@@ -31,8 +32,6 @@ data:
   frame_dir: data/frames/sft/
   datasets:
     - r2r-ce
-    - rxr-ce
-    - sqa3d
   split: train
   num_workers: 8
 

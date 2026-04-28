@@ -8,10 +8,12 @@ model:
   lora_alpha: 64
 
 training:
-  epochs: 6
+  epochs: 3
+  episodes_per_epoch: 2000      # random subset per epoch; null = full dataset
   batch_size_prompts: 32
-  group_size: 8
-  max_response_tokens: 2048
+  group_size: 4
+  max_steps_per_rollout: 10
+  max_response_tokens: 128
   learning_rate: 5.0e-7
   weight_decay: 0.0
   max_grad_norm: 1.0
@@ -21,6 +23,7 @@ training:
   normalize_advantages: true
   replay_capacity: 4096
   replay_advantage_threshold: 0.05
+  rollout_temperature: 0.1        # lowered for smoke test; raise to 1.5 for real training
 
 curriculum:
   points:
@@ -31,14 +34,14 @@ curriculum:
         collision: 0.1
         goal: 0.1
         consistency: 0.0
-    - epoch: 3
+    - epoch: 2
       weights:
         format: 0.4
         progress: 0.4
         collision: 0.3
         goal: 0.5
         consistency: 0.2
-    - epoch: 5
+    - epoch: 3
       weights:
         format: 0.1
         progress: 0.7

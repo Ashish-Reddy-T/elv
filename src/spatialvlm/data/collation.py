@@ -86,7 +86,12 @@ class SpatialVLMCollator:
 
             # Tokenize
             instruction = frame.get("instruction", "Navigate the environment.")
-            target = frame.get("target") if self.stage == "sft" else None
+            if self.stage == "sft":
+                target = frame.get("target")
+            else:
+                # Prealign: predict caption given instruction+spatial context when available.
+                # Falls back to prealign format (spatial→instruction) when no caption.
+                target = frame.get("caption")
             tok_out = build_input_ids(
                 self.tokenizer,
                 instruction=instruction,
