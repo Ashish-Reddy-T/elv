@@ -390,20 +390,16 @@ class SpatialVLM(nn.Module):
 
         self.backbone.load_model()  # no-op if already loaded; triggers lazy init
 
-        # Is it the original class method or a bound function?
-        print(f"DEBUG: Forward method info: {self.backbone.model.forward}")
-
         # Check if it's a wrapper (like a functools.partial or a decorated function)
         import inspect
-        print(f"DEBUG: Source file of forward: {inspect.getfile(self.backbone.model.forward)}")
 
         with torch.no_grad():
             siglip_tokens, dinov2_tokens = self.encode_vision(siglip_pixels, dinov2_pixels)
             gatr_tokens, positions_3d = self.encode_geometry(depth, intrinsics)
 
             # DEBUG 1: Visual/Geo stats
-            print(f"DEBUG: siglip_tokens mean: {siglip_tokens.mean().item():.4f}, has_nan: {torch.isnan(siglip_tokens).any()}")
-            print(f"DEBUG: gatr_tokens mean: {gatr_tokens.mean().item():.4f}, has_nan: {torch.isnan(gatr_tokens).any()}")
+            # print(f"DEBUG: siglip_tokens mean: {siglip_tokens.mean().item():.4f}, has_nan: {torch.isnan(siglip_tokens).any()}")
+            # print(f"DEBUG: gatr_tokens mean: {gatr_tokens.mean().item():.4f}, has_nan: {torch.isnan(gatr_tokens).any()}")
             
             # Extract text embeddings from the prompt so norm_matching can scale
             # visual tokens to match text token magnitude. Without this, stale EMA
@@ -422,7 +418,7 @@ class SpatialVLM(nn.Module):
             # DEBUG 2: Compare Norms
             text_norm = text_tokens_for_norm.norm(p=2, dim=-1).mean().item()
             fused_norm = fused_tokens.norm(p=2, dim=-1).mean().item()
-            print(f"DEBUG: Avg Text Norm: {text_norm:.4f} | Avg Fused Norm: {fused_norm:.4f}")
+            # print(f"DEBUG: Avg Text Norm: {text_norm:.4f} | Avg Fused Norm: {fused_norm:.4f}")
             if abs(text_norm - fused_norm) > (text_norm * 10):
                 print("WARNING: Massive norm mismatch detected!")
 
@@ -432,9 +428,9 @@ class SpatialVLM(nn.Module):
 
             # DEBUG 3: Inspect hook data
             # Assuming deepstack_kwargs contains the indices/embeddings to be swapped
-            print(f"DEBUG: deepstack_kwargs keys: {deepstack_kwargs.keys()}")
-            print(f"DEBUG: spatial_start_idx: {spatial_start_idx}")
-            print(f"DEBUG: fused_tokens shape: {fused_tokens.shape}")
+            # print(f"DEBUG: deepstack_kwargs keys: {deepstack_kwargs.keys()}")
+            # print(f"DEBUG: spatial_start_idx: {spatial_start_idx}")
+            # print(f"DEBUG: fused_tokens shape: {fused_tokens.shape}")
 
 
         # Stash on the base model (not the PeftModel wrapper).
@@ -488,15 +484,15 @@ class SpatialVLM(nn.Module):
 
         from spatialvlm.backbone.rope_patch import _find_embed_tokens
         embed_module = _find_embed_tokens(_base)
-        print(f"DEBUG [PRE-GEN]: Embed Module ID: {id(embed_module)}")
-        print(f"DEBUG [PRE-GEN]: Has visual embeds: {hasattr(embed_module, '_deepstack_visual_embeds')}")
+        # print(f"DEBUG [PRE-GEN]: Embed Module ID: {id(embed_module)}")
+        # print(f"DEBUG [PRE-GEN]: Has visual embeds: {hasattr(embed_module, '_deepstack_visual_embeds')}")
 
         rotary_emb = _base.model.language_model.rotary_emb
-        print(f"DEBUG [PRE-GEN]: Has 3D coords: {hasattr(rotary_emb, '_spatial_coords_3d')}")
+        # print(f"DEBUG [PRE-GEN]: Has 3D coords: {hasattr(rotary_emb, '_spatial_coords_3d')}")
 
         active_embed = _find_embed_tokens(_active_model)
-        print(f"DEBUG [PRE-GEN]: Active Embed ID: {id(active_embed)}")
-        print(f"DEBUG [PRE-GEN]: Active Has visual embeds: {hasattr(active_embed, '_deepstack_visual_embeds')}")
+        # print(f"DEBUG [PRE-GEN]: Active Embed ID: {id(active_embed)}")
+        # print(f"DEBUG [PRE-GEN]: Active Has visual embeds: {hasattr(active_embed, '_deepstack_visual_embeds')}")
         
         # 1. Manual Embedding Injection
         embed_layer = self.backbone.model.get_input_embeddings()

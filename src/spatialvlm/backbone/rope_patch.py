@@ -123,8 +123,8 @@ def patch_rope_forward(
 
     # 3. Check for presence of data
     if spatial_coords is None or spatial_mask is None:
-        print(spatial_coords is None, spatial_mask is None)
-        print("earliest exit")
+        # print(spatial_coords is None, spatial_mask is None)
+        # print("earliest exit")
         return cos, sin
 
     # 4. Determine Phase: Prefill vs. Decoding
@@ -136,7 +136,7 @@ def patch_rope_forward(
     # (where sequence lengths match). During decoding, current_seq_len is 1.
     if current_seq_len == stashed_seq_len:
         if not spatial_mask.any():
-            print('returning because not spatial_mask.any()')
+            # print('returning because not spatial_mask.any()')
             return cos, sin
 
         # # Compute icosahedral cos/sin
@@ -157,15 +157,15 @@ def patch_rope_forward(
         cos[mask_expanded] = ico_cos.reshape(-1)
         sin[mask_expanded] = ico_sin.reshape(-1)
 
-        print(f"DEBUG: Max Ico Theta: {torch.acos(ico_cos).max().item():.4f}")
-        print(f"DEBUG: Max Orig Theta: {torch.acos(cos[mask_expanded]).max().item():.4f}")
+        # print(f"DEBUG: Max Ico Theta: {torch.acos(ico_cos).max().item():.4f}")
+        # print(f"DEBUG: Max Orig Theta: {torch.acos(cos[mask_expanded]).max().item():.4f}")
 
     # CRITICAL: We do NOT clear rotary_emb_self._spatial_coords_3d here.
     # Because this module is shared across layers, clearing it here would
     # prevent Layer 1, 2, 3... from seeing the data.
     # The attributes should be cleared manually after model.generate() returns.
 
-    print('returning end of function')
+    # print('returning end of function')
     return cos, sin
 
 def _deepstack_embedding_hook(
