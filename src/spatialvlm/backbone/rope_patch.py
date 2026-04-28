@@ -233,10 +233,7 @@ def stash_spatial_forward_kwargs(model_self: Any, kwargs: dict[str, Any]) -> Non
             if new_mask is not None:
                 embed_module._deepstack_spatial_mask = new_mask
         except Exception as e:
-            print(f"DEBUG: Failed to stash visual embeds on embedding layer: {e}")
-
-    print(f"DEBUG: Stashed spatial data on {count} RoPE modules.")
-    print(f"DEBUG: Mask provided: {new_mask is not None}, Coords provided: {new_coords is not None}")
+            raise RuntimeError(f"Failed to stash visual embeds on embedding layer: {e}") from e
 
 def patch_model_forward(
     original_forward: Any,

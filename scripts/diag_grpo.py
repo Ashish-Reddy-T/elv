@@ -161,74 +161,94 @@ def main() -> None:
     text3 = tokenizer.decode(out[0, prompt_len:], skip_special_tokens=True)
     print(f"Generated: {text3!r}")
 
-    print("\nDone.")
-
+    # -----------------------------------------------------------------------
+    print("\n" + "=" * 60)
+    print("TEST 3b — same prompt, NO visual injection (placeholder tokens only)")
+    print("=" * 60)
+    # Bypass visual injection: call backbone.model.generate directly with spatial
+    # placeholder token embeddings unchanged. If this generates coherent text, SFT
+    # was trained without working DeepStack injection.
+    with torch.no_grad():
+        out3b = model.backbone.model.generate(
+            input_ids,
+            attention_mask=attn_mask,
+            max_new_tokens=80,
+            do_sample=False,
+            pad_token_id=tokenizer.eos_token_id,
+        )
+    text3b = tokenizer.decode(out3b[0, prompt_len:], skip_special_tokens=True)
+    print(f"Generated (no injection): {text3b!r}")
 
     frame_path = "/mnt/home/npant/ceph/datasets/spatialvlm/frames/prealign/ep_10000_step_000.pt"
-    
-    print(f"Loading real frame from: {frame_path}")
-    frame = torch.load(frame_path, map_location=device)
 
     print("\n" + "=" * 60)
     print("TEST 4 — Real Frame SpatialVLM Generate")
     print("=" * 60)
 
-    # 1. Pick a real frame instead of creating fake grey tensors
+    print(f"Loading real frame from: {frame_path}")
+    frame = torch.load(frame_path, map_location="cpu", weights_only=False)
+    print(f"Frame keys: {list(frame.keys())}")
 
-    # Load the first available real frame
-    frame_data = frame
+    import torch.nn.functional as F_
+    from spatialvlm.utils.camera import CameraIntrinsics
 
-    # Move frame tensors to the correct device/dtype
-    # Assuming your .pt files contain these keys:
-    print(frame_data.keys())
-    siglip_px = frame_data["siglip_pixels"].to(device, dtype=dtype)
-    dinov2_px = frame_data["dinov2_pixels"].to(device, dtype=dtype)
-    depth = frame_data["depth"].to(device, dtype=dtype)
-    intrinsics = frame_data["intrinsics"] # Should be CameraIntrinsics object
+    # Preprocess RGB: frame["rgb"] is [3, H, W] float32 (may be [0,255] or [0,1])
+    rgb = frame["rgb"].float()
+    if rgb.max() > 1.0:
+        rgb = rgb / 255.0  # normalise to [0,1]
+    rgb_4d = rgb.unsqueeze(0)  # [1, 3, H, W]
+    siglip_px = F_.interpolate(rgb_4d, size=(384, 384), mode="bilinear", align_corners=False)
+    dinov2_px = F_.interpolate(rgb_4d, size=(518, 518), mode="bilinear", align_corners=False)
+    siglip_px = siglip_px.to(device, dtype=dtype)
+    dinov2_px = dinov2_px.to(device, dtype=dtype)
 
-    instruction = "Walk forward to the kitchen door."
-    placeholder_id = tokenizer.get_vocab().get("<|image_pad|>", tokenizer.pad_token_id or 0)
+    depth4 = frame["depth"].unsqueeze(0).to(device, dtype=dtype)  # [1, 518, 518]
 
-    # 2. Build the Prompt with specific ChatML/Qwen formatting
-    # Qwen-VL often needs <|im_start|> tags to generate actual text instead of empty strings.
-    prefix_text = f"<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\nInstruction: {instruction}\nObservation:"
-    prefix_ids = tokenizer.encode(prefix_text, add_special_tokens=True)
+    intr_d = frame["intrinsics"]
+    intrinsics4 = CameraIntrinsics(
+        fx=intr_d["fx"], fy=intr_d["fy"],
+        cx=intr_d["cx"], cy=intr_d["cy"],
+        width=int(intr_d["width"]), height=int(intr_d["height"]),
+    )
 
-    spatial_start_idx = len(prefix_ids)
-    spatial_ids = [placeholder_id] * 1369
-    suffix_ids = tokenizer.encode("\n<|im_end|>\n<|im_start|>assistant\n", add_special_tokens=False)
+    instruction4 = frame["instruction"]
+    print(f"Instruction: {instruction4!r}")
 
-    all_ids = prefix_ids + spatial_ids + suffix_ids
-    input_ids = torch.tensor([all_ids], dtype=torch.long, device=device)
-    attn_mask = torch.ones_like(input_ids)
+    # SFT inference format: SYSTEM + instruction + Observation: [spatial] + \n\n
+    # Must NOT use build_input_ids(target=None) — that gives prealign format + EOS.
+    placeholder_id4 = tokenizer.get_vocab().get("<|image_pad|>", tokenizer.pad_token_id or 0)
+    prefix_text4 = f"{SYSTEM_PROMPT}\n\nInstruction: {instruction4}\n\nObservation:"
+    prefix_ids4 = tokenizer.encode(prefix_text4, add_special_tokens=True)
+    spatial_start4 = len(prefix_ids4)
+    spatial_ids4 = [placeholder_id4] * 1369
+    suffix_ids4 = tokenizer.encode("\n\n", add_special_tokens=False)
+    all_ids4 = prefix_ids4 + spatial_ids4 + suffix_ids4
+    input_ids4 = torch.tensor([all_ids4], dtype=torch.long, device=device)
+    attn_mask4 = torch.ones_like(input_ids4)
 
-    print(f"Prefix tokens: {len(prefix_ids)}")
-    print(f"Prompt length: {input_ids.shape[1]} tokens (incl. {len(spatial_ids)} spatial)")
+    print(f"Prompt length: {input_ids4.shape[1]} tokens (spatial_start={spatial_start4})")
 
-    # 3. Generate
     with torch.no_grad():
-        out = model.generate(
+        out4 = model.generate(
             siglip_pixels=siglip_px,
             dinov2_pixels=dinov2_px,
-            depth=depth,
-            intrinsics=intrinsics,
-            input_ids=input_ids,
-            spatial_start_idx=spatial_start_idx,
-            attention_mask=attn_mask,
+            depth=depth4,
+            intrinsics=intrinsics4,
+            input_ids=input_ids4,
+            spatial_start_idx=spatial_start4,
+            attention_mask=attn_mask4,
             max_new_tokens=80,
-            do_sample=False, # Use greedy to ensure the RoPE math is stable
+            do_sample=False,
             pad_token_id=tokenizer.eos_token_id,
         )
 
-    # 4. Decode
-    prompt_len = input_ids.shape[1]
-    generated_tokens = out[0, prompt_len:]
-    text3 = tokenizer.decode(generated_tokens, skip_special_tokens=True)
+    prompt_len4 = input_ids4.shape[1]
+    gen_ids4 = out4[0, prompt_len4:]
+    text4 = tokenizer.decode(gen_ids4, skip_special_tokens=True)
+    print(f"Generated Raw IDs: {gen_ids4.tolist()}")
+    print(f"Generated Text: {text4!r}")
 
-    print(f"Generated Raw IDs: {generated_tokens.tolist()}") # Helpful to see if it's yapping spaces
-    print(f"Generated Text: {text3!r}")
-
-print("\nDone.")
+    print("\nDone.")
 
 if __name__ == "__main__":
     main()
