@@ -60,10 +60,11 @@ def supervised_loss(
     ignore_index: int = -100,
     label_smoothing: float = 0.0,
 ) -> torch.Tensor:
-    """Cross-entropy SFT objective.
+    """Causal-LM cross-entropy: logit at t predicts label at t+1.
 
     logits: [B, T, V]
-    labels: [B, T]
+    labels: [B, T]  — same convention as HuggingFace (labels[t] = token at position t).
+                       The shift is applied here so callers don't need to pre-shift.
     """
     if logits.ndim != 3:
         raise ValueError(f"logits must be [B,T,V], got {tuple(logits.shape)}")
@@ -75,10 +76,15 @@ def supervised_loss(
             f"{tuple(labels.shape)}"
         )
 
-    vocab = logits.shape[-1]
+    # Causal LM shift: logit at position t predicts the token at position t+1.
+    # Without this shift, logit[t] is paired with label[t] (the token the model
+    # already saw), which is trivially optimizable and produces garbage at generation.
+    shift_logits = logits[:, :-1, :].contiguous()   # [B, T-1, V]
+    shift_labels = labels[:, 1:].contiguous()         # [B, T-1]
+    vocab = shift_logits.shape[-1]
     return functional.cross_entropy(
-        logits.reshape(-1, vocab),
-        labels.reshape(-1),
+        shift_logits.reshape(-1, vocab),
+        shift_labels.reshape(-1),
         ignore_index=ignore_index,
         label_smoothing=label_smoothing,
     )

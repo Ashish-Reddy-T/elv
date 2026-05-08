@@ -131,9 +131,17 @@ def _maybe_enable_gradient_checkpointing(model: Any, cfg: Any) -> None:
         return
     hf = backbone.model
     try:
+        # enable_input_require_grads() is required for PEFT models with gradient
+        # checkpointing — without it the input embeddings have no grad and
+        # checkpointing silently drops gradients through the frozen backbone.
+        if hasattr(hf, "enable_input_require_grads"):
+            hf.enable_input_require_grads()
         if hasattr(hf, "gradient_checkpointing_enable"):
-            hf.gradient_checkpointing_enable()
-            print("Gradient checkpointing: enabled on backbone.")
+            # use_reentrant=False avoids the DDP "variable marked ready twice"
+            # error that occurs when reentrant checkpointing fires gradient hooks
+            # twice for the same LoRA parameter.
+            hf.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+            print("Gradient checkpointing: enabled on backbone (use_reentrant=False).")
     except (AttributeError, RuntimeError, ValueError) as exc:
         print(f"Warning: could not enable gradient checkpointing: {exc}")
 
@@ -297,8 +305,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--frame-dir", required=True, help="Cached frames directory")
     p.add_argument("--device", default="cpu")
     p.add_argument("--dtype", default="fp32", choices=["fp32", "fp16", "bf16"])
-    p.add_argument("--wandb-project", default="spatialvlm", help="wandb project name")
-    p.add_argument("--wandb-mode", default="online", choices=["online", "offline", "disabled"])
     p.add_argument("--checkpoint-dir", default="checkpoints", help="Checkpoint directory")
     p.add_argument("--resume", default=None, help="Resume from checkpoint .pt file")
     p.add_argument("--limit", type=int, default=None, help="Limit dataset size (for testing)")
@@ -310,6 +316,8 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--log-every", type=int, default=10, help="Log every N optimizer steps")
     p.add_argument("--save-every-epoch", action="store_true", help="Save checkpoint each epoch")
+    p.add_argument("--wandb-project", default="spatialvlm", help="wandb project name")
+    p.add_argument("--wandb-mode", default="disabled", choices=["online", "offline", "disabled"])
     return p.parse_args()
 
 
@@ -426,16 +434,39 @@ def main() -> int:
     if args.resume:
         if dist_ctx.is_main:
             print(f"Resuming from: {args.resume}")
-        ckpt = torch.load(args.resume, map_location=device, weights_only=False)
+        # Load to CPU first — avoids doubling GPU memory since the model is already on device.
+        # load_state_dict will copy weights into the existing GPU tensors in-place.
+        ckpt = torch.load(args.resume, map_location="cpu", weights_only=False)
         _unwrap(model).load_state_dict(ckpt["model_state_dict"], strict=False)
-        if "optimizer_state_dict" in ckpt:
-            trainer.optimizer.load_state_dict(ckpt["optimizer_state_dict"])
-        if "scheduler_state_dict" in ckpt:
-            scheduler.load_state_dict(ckpt["scheduler_state_dict"])
-        start_epoch = ckpt.get("epoch", 0)
-        global_step = ckpt.get("global_step", 0)
-        if dist_ctx.is_main:
-            print(f"Resumed at epoch={start_epoch}, step={global_step}")
+        ckpt_stage = (ckpt.get("config") or {}).get("stage", stage)
+        if ckpt_stage == stage:
+            # Same-stage resume: restore optimizer/scheduler/step so training continues.
+            # Guard against param-group count mismatch (e.g. phase1→phase2 adds siglip_proj).
+            opt_compat = False
+            if "optimizer_state_dict" in ckpt:
+                saved_groups = ckpt["optimizer_state_dict"].get("param_groups", [])
+                curr_groups = trainer.optimizer.param_groups
+                if len(saved_groups) == len(curr_groups):
+                    opt_compat = all(
+                        len(sg["params"]) == len(cg["params"])
+                        for sg, cg in zip(saved_groups, curr_groups)
+                    )
+            if opt_compat:
+                trainer.optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+                if "scheduler_state_dict" in ckpt:
+                    scheduler.load_state_dict(ckpt["scheduler_state_dict"])
+                start_epoch = ckpt.get("epoch", 0)
+                global_step = ckpt.get("global_step", 0)
+                if dist_ctx.is_main:
+                    print(f"Resumed at epoch={start_epoch}, step={global_step}")
+            else:
+                # Same stage but different trainable groups (phase1→phase2): model weights only
+                if dist_ctx.is_main:
+                    print(f"Same-stage phase transition: model weights loaded, optimizer reset")
+        else:
+            # Cross-stage init (e.g. prealign → SFT): model weights only, fresh optimizer
+            if dist_ctx.is_main:
+                print(f"Cross-stage init: '{ckpt_stage}' → '{stage}' (projector weights loaded, optimizer reset)")
 
     # Training loop
     if dist_ctx.is_main:

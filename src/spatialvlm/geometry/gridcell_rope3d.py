@@ -126,26 +126,32 @@ class IcosahedralRoPE3D(nn.Module):
         # positions: [B, N, 3]
         # directions: [6, 3] (float32 buffers)
         # Cast to float32 for numerical stability; buffers are always float32.
+        orig_shape = positions.shape
         orig_dtype = positions.dtype
-        positions = positions.float()
+        
+        # Flatten everything except the last dimension (the 3D coords)
+        # This turns [..., 3] into [TotalTokens, 3]
+        pos_flat = positions.view(-1, 3).float() 
+        
+        # Use a 2D einsum equation since we flattened the batch/sequence
+        # "nd,fd->nf" where n is (Batch * Tokens), d is 3, f is 6 directions
+        projections = torch.einsum("nd,fd->nf", pos_flat, self.directions)  # [TotalTokens, 6]
 
-        # Scalar projections: dot each position with each icosahedral direction
-        # projections[b, n, i] = d_i . p_{b,n}
-        projections = torch.einsum("bnd,fd->bnf", positions, self.directions)  # [B, N, 6]
+        # Scale by frequencies
+        scaled = projections.unsqueeze(-1) * self.freqs  # [TotalTokens, 6, 8]
 
-        # Scale by frequencies: [B, N, 6, 8]
-        scaled = projections.unsqueeze(-1) * self.freqs  # [B, N, 6, 8]
-
-        # Compute sin and cos: both [B, N, 6, 8]
+        # Compute sin and cos
         sin_enc = torch.sin(scaled)
         cos_enc = torch.cos(scaled)
 
-        # Interleave: [B, N, 6, 8, 2] -> flatten last 3 dims -> [B, N, 96]
-        enc = torch.stack([sin_enc, cos_enc], dim=-1)  # [B, N, 6, 8, 2]
-        enc = enc.reshape(*positions.shape[:2], self.N_DIRS * self.N_FREQS * 2)  # [B, N, 96]
+        # Interleave and reshape back to match the input's leading dimensions
+        enc = torch.stack([sin_enc, cos_enc], dim=-1)  # [TotalTokens, 6, 8, 2]
+        
+        # Final output shape should be [B, N, 96] (or whatever the input leading dims were)
+        final_shape = list(orig_shape[:-1]) + [self.N_DIRS * self.N_FREQS * 2]
+        enc = enc.reshape(*final_shape)
 
         return enc.to(orig_dtype)
-
 
 # Backward-compatible alias for code that references the old name
 GridCellRoPE3D = IcosahedralRoPE3D

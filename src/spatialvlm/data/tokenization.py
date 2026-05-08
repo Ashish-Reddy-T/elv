@@ -24,10 +24,10 @@ from typing import Any
 
 import torch
 
-# Default spatial placeholder — we reuse Qwen3-VL's image-pad token so the
-# tokenizer already knows it.  Override via ``SpatialTokenizerConfig`` if
-# needed (e.g. when using a non-Qwen tokenizer).
-DEFAULT_SPATIAL_PLACEHOLDER = "<|image_pad|>"
+# Default spatial placeholder — use a normal tokenizer token, not Qwen-VL's
+# native image-pad token. ``<|image_pad|>`` carries multimodal semantics and
+# collapses generation when reused as a generic learned spatial slot.
+DEFAULT_SPATIAL_PLACEHOLDER = "."
 
 SYSTEM_PROMPT = (
     "You are a spatial navigation assistant. Given an observation of an "

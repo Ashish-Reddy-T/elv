@@ -8,7 +8,7 @@ model:
   lora_alpha: 64
 
 training:
-  epochs: 2
+  epochs: 1
   batch_size: 1
   grad_accum_steps: 32       # effective batch = 1 * 32 * 4 GPUs = 128
   learning_rate: 5.0e-5
@@ -28,7 +28,7 @@ training:
 
 data:
   dataset: habitat-frames
-  frame_dir: data/frames/sft/
+  frame_dir: /mnt/home/npant/ceph/datasets/spatialvlm/frames/sft-with-turns/
   datasets:
     - r2r-ce
     - rxr-ce

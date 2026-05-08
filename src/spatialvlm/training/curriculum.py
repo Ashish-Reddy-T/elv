@@ -16,6 +16,8 @@ class RewardWeights:
     collision_weight: float
     goal_weight: float
     consistency_weight: float
+    wrong_stop_weight: float = 0.0
+    proximity_weight: float = 0.0
 
     def as_dict(self) -> dict[str, float]:
         return {
@@ -24,6 +26,8 @@ class RewardWeights:
             "collision": self.collision_weight,
             "goal": self.goal_weight,
             "consistency": self.consistency_weight,
+            "wrong_stop": self.wrong_stop_weight,
+            "proximity": self.proximity_weight,
         }
 
 
@@ -48,37 +52,48 @@ class RewardCurriculum:
 
     @classmethod
     def default(cls) -> RewardCurriculum:
-        """Default 6-epoch progression emphasizing format -> spatial rewards."""
+        """Default 3-epoch progression: format+anti-STOP → navigation → full spatial.
+
+        proximity_reward replaces the binary goal_reward + wrong_stop_reward with a
+        sliding scale: ≤1m→+10, ≤3m→+5, ≤6m→+1, >6m→-1. goal_weight and
+        wrong_stop_weight are kept at 0 to avoid double-counting.
+        """
         return cls(
             points=[
                 CurriculumPoint(
                     epoch=1,
                     weights=RewardWeights(
-                        format_weight=1.0,
-                        progress_weight=0.1,
+                        format_weight=0.5,
+                        progress_weight=0.3,
                         collision_weight=0.1,
-                        goal_weight=0.1,
+                        goal_weight=0.0,
                         consistency_weight=0.0,
+                        wrong_stop_weight=0.0,
+                        proximity_weight=1.0,
+                    ),
+                ),
+                CurriculumPoint(
+                    epoch=2,
+                    weights=RewardWeights(
+                        format_weight=0.3,
+                        progress_weight=0.5,
+                        collision_weight=0.3,
+                        goal_weight=0.0,
+                        consistency_weight=0.2,
+                        wrong_stop_weight=0.0,
+                        proximity_weight=0.8,
                     ),
                 ),
                 CurriculumPoint(
                     epoch=3,
                     weights=RewardWeights(
-                        format_weight=0.4,
-                        progress_weight=0.4,
-                        collision_weight=0.3,
-                        goal_weight=0.5,
-                        consistency_weight=0.2,
-                    ),
-                ),
-                CurriculumPoint(
-                    epoch=5,
-                    weights=RewardWeights(
                         format_weight=0.1,
                         progress_weight=0.7,
                         collision_weight=0.6,
-                        goal_weight=1.0,
+                        goal_weight=0.0,
                         consistency_weight=0.6,
+                        wrong_stop_weight=0.0,
+                        proximity_weight=1.0,
                     ),
                 ),
             ]
@@ -106,14 +121,17 @@ class RewardCurriculum:
         ratio = (epoch - left.epoch) / span
         lw = left.weights
         rw = right.weights
+        def lerp(a: float, b: float) -> float:
+            return a + ratio * (b - a)
+
         return RewardWeights(
-            format_weight=lw.format_weight + ratio * (rw.format_weight - lw.format_weight),
-            progress_weight=lw.progress_weight + ratio * (rw.progress_weight - lw.progress_weight),
-            collision_weight=lw.collision_weight
-            + ratio * (rw.collision_weight - lw.collision_weight),
-            goal_weight=lw.goal_weight + ratio * (rw.goal_weight - lw.goal_weight),
-            consistency_weight=lw.consistency_weight
-            + ratio * (rw.consistency_weight - lw.consistency_weight),
+            format_weight=lerp(lw.format_weight, rw.format_weight),
+            progress_weight=lerp(lw.progress_weight, rw.progress_weight),
+            collision_weight=lerp(lw.collision_weight, rw.collision_weight),
+            goal_weight=lerp(lw.goal_weight, rw.goal_weight),
+            consistency_weight=lerp(lw.consistency_weight, rw.consistency_weight),
+            wrong_stop_weight=lerp(lw.wrong_stop_weight, rw.wrong_stop_weight),
+            proximity_weight=lerp(lw.proximity_weight, rw.proximity_weight),
         )
 
 
@@ -124,9 +142,9 @@ def aggregate_weighted_rewards(
     """Aggregate reward terms into a single scalar reward tensor.
 
     Expected keys:
-      `format`, `progress`, `collision`, `goal`, `consistency`
+      `format`, `progress`, `collision`, `goal`, `consistency`, `wrong_stop`
     """
-    expected = {"format", "progress", "collision", "goal", "consistency"}
+    expected = {"format", "progress", "collision", "goal", "consistency", "wrong_stop", "proximity"}
     missing = expected.difference(reward_terms)
     if missing:
         raise KeyError(f"Missing reward terms: {sorted(missing)}")
@@ -137,4 +155,6 @@ def aggregate_weighted_rewards(
         + weights.collision_weight * reward_terms["collision"]
         + weights.goal_weight * reward_terms["goal"]
         + weights.consistency_weight * reward_terms["consistency"]
+        + weights.wrong_stop_weight * reward_terms["wrong_stop"]
+        + weights.proximity_weight * reward_terms["proximity"]
     )

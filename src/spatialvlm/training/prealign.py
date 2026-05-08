@@ -61,10 +61,10 @@ def masked_lm_loss(
     labels: torch.Tensor,
     ignore_index: int = -100,
 ) -> torch.Tensor:
-    """Compute token-level cross-entropy with ignore index.
+    """Causal-LM cross-entropy: logit at t predicts label at t+1.
 
     logits: [B, T, V]
-    labels: [B, T]
+    labels: [B, T]  — HuggingFace convention (labels[t] = token at position t).
     """
     if logits.ndim != 3:
         raise ValueError(f"logits must be [B,T,V], got {tuple(logits.shape)}")
@@ -76,10 +76,13 @@ def masked_lm_loss(
             f"{tuple(labels.shape)}"
         )
 
-    vocab = logits.shape[-1]
+    # Causal LM shift: same fix as supervised_loss in sft.py.
+    shift_logits = logits[:, :-1, :].contiguous()   # [B, T-1, V]
+    shift_labels = labels[:, 1:].contiguous()         # [B, T-1]
+    vocab = shift_logits.shape[-1]
     return functional.cross_entropy(
-        logits.reshape(-1, vocab),
-        labels.reshape(-1),
+        shift_logits.reshape(-1, vocab),
+        shift_labels.reshape(-1),
         ignore_index=ignore_index,
     )
 

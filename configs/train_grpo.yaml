@@ -8,46 +8,70 @@ model:
   lora_alpha: 64
 
 training:
-  epochs: 3
-  episodes_per_epoch: 2000      # random subset per epoch; null = full dataset
+  epochs: 9
+  episodes_per_epoch: 500       # ~125 steps/epoch per rank; 3 epochs × 500 = same total as before
   batch_size_prompts: 32
   group_size: 4
-  max_steps_per_rollout: 10
+  max_steps_per_rollout: 15
   max_response_tokens: 128
   learning_rate: 5.0e-7
   weight_decay: 0.0
   max_grad_norm: 1.0
   clip_epsilon: 0.2
   kl_beta: 0.001
-  entropy_beta: 0.0
+  entropy_beta: 0.01
   normalize_advantages: true
   replay_capacity: 4096
   replay_advantage_threshold: 0.05
-  rollout_temperature: 0.1        # lowered for smoke test; raise to 1.5 for real training
+  rollout_temperature: 1.5
 
 curriculum:
   points:
-    - epoch: 1
+    - epoch: 1   # format + anti-collision warm-up, no goal pressure
       weights:
-        format: 1.0
-        progress: 0.1
+        format: 0.5
+        progress: 0.3
         collision: 0.1
-        goal: 0.1
+        goal: 0.0
         consistency: 0.0
-    - epoch: 2
+        wrong_stop: 0.0
+        proximity: 1.0
+    - epoch: 3   # begin introducing goal + wrong_stop gently
       weights:
         format: 0.4
         progress: 0.4
+        collision: 0.2
+        goal: 0.2
+        consistency: 0.1
+        wrong_stop: 0.1
+        proximity: 0.9
+    - epoch: 5   # mid-point: balanced navigation
+      weights:
+        format: 0.3
+        progress: 0.5
         collision: 0.3
         goal: 0.5
         consistency: 0.2
-    - epoch: 3
+        wrong_stop: 0.3
+        proximity: 0.8
+    - epoch: 7   # ramp toward full spatial rewards
+      weights:
+        format: 0.2
+        progress: 0.6
+        collision: 0.5
+        goal: 0.8
+        consistency: 0.4
+        wrong_stop: 0.4
+        proximity: 0.9
+    - epoch: 9   # full reward suite
       weights:
         format: 0.1
         progress: 0.7
         collision: 0.6
         goal: 1.0
         consistency: 0.6
+        wrong_stop: 0.5
+        proximity: 1.0
 
 environment:
   python: "3.12.2"

@@ -20,11 +20,17 @@ class RewardConfig:
     format_reward: float = 1.0
     collision_penalty: float = -2.0
     goal_reward: float = 10.0
+    wrong_stop_penalty: float = -1.0
     consistency_penalty: float = -1.0
     collision_clearance_threshold: float = 0.1
     goal_distance_threshold: float = 1.0
     progress_clip: tuple[float, float] = (-2.0, 2.0)
     required_response_markers: tuple[str, ...] = ("Reasoning:", "Action:")
+    # Proximity reward tiers: parallel lists of (distance_threshold, reward_value).
+    # Applied innermost-first; distances beyond all thresholds receive proximity_wrong_stop_penalty.
+    proximity_thresholds: tuple[float, ...] = (1.0, 3.0, 6.0)
+    proximity_tier_rewards: tuple[float, ...] = (10.0, 5.0, 1.0)
+    proximity_wrong_stop_penalty: float = -1.0
 
 
 def _normalize_action(text: str | None) -> str | None:
@@ -116,6 +122,69 @@ def goal_reward(
     )
 
 
+def wrong_stop_reward(
+    final_geodesic: torch.Tensor,
+    stopped: torch.Tensor,
+    goal_threshold: float = 1.0,
+    penalty: float = -2.0,
+) -> torch.Tensor:
+    """Penalty at the terminal step when the agent stops far from the goal.
+
+    Fires once on the step where STOP was issued, only if the agent is outside
+    the success radius. Complements goal_reward: success → +reward, wrong stop →
+    −penalty, no stop → 0. This breaks the STOP attractor in epoch 1 where the
+    format reward alone makes immediate STOP look safe.
+    """
+    _ensure_vector("final_geodesic", final_geodesic)
+    _ensure_vector("stopped", stopped, expected_size=final_geodesic.shape[0])
+
+    dist = final_geodesic.float()
+    stop = stopped.bool()
+    at_goal = torch.isfinite(dist) & (dist <= goal_threshold)
+    bad_stop = stop & ~at_goal
+    return torch.where(
+        bad_stop,
+        torch.full_like(dist, penalty),
+        torch.zeros_like(dist),
+    )
+
+
+def proximity_reward(
+    final_geodesic: torch.Tensor,
+    stopped: torch.Tensor,
+    thresholds: tuple[float, ...] = (1.0, 3.0, 6.0),
+    tier_rewards: tuple[float, ...] = (10.0, 5.0, 1.0),
+    wrong_stop_penalty: float = -1.0,
+) -> torch.Tensor:
+    """Sliding-scale terminal reward based on distance to goal at STOP.
+
+    Tiers are evaluated outer-to-inner so the tightest match wins:
+      d <= thresholds[0]: tier_rewards[0]   (e.g. <=1m → +10)
+      d <= thresholds[1]: tier_rewards[1]   (e.g. <=3m → +5)
+      d <= thresholds[2]: tier_rewards[2]   (e.g. <=6m → +1)
+      d >  thresholds[-1]: wrong_stop_penalty  (e.g. >6m → -1)
+    Fires only on the STOP step; all other steps return 0.
+    """
+    if len(thresholds) != len(tier_rewards):
+        raise ValueError("thresholds and tier_rewards must have the same length.")
+    _ensure_vector("final_geodesic", final_geodesic)
+    _ensure_vector("stopped", stopped, expected_size=final_geodesic.shape[0])
+
+    dist = final_geodesic.float()
+    stop = stopped.bool()
+    finite = torch.isfinite(dist)
+
+    # Start with wrong-stop penalty for all stopped steps, then overwrite with tier rewards.
+    result = torch.where(stop, torch.full_like(dist, wrong_stop_penalty), torch.zeros_like(dist))
+
+    # Apply tiers from loosest to tightest so the best matching tier wins.
+    for thresh, rew in zip(reversed(thresholds), reversed(tier_rewards)):
+        in_tier = stop & finite & (dist <= thresh)
+        result = torch.where(in_tier, torch.full_like(dist, rew), result)
+
+    return result
+
+
 def consistency_reward(
     predicted_actions: Sequence[str | None],
     executed_actions: Sequence[str | None],
@@ -204,6 +273,19 @@ def compute_reward_terms(
             executed_actions=executed_actions,
             mismatch_penalty=cfg.consistency_penalty,
             device=device,
+        ),
+        "wrong_stop": wrong_stop_reward(
+            final_geodesic=final_geodesic,
+            stopped=stopped,
+            goal_threshold=cfg.goal_distance_threshold,
+            penalty=cfg.wrong_stop_penalty,
+        ),
+        "proximity": proximity_reward(
+            final_geodesic=final_geodesic,
+            stopped=stopped,
+            thresholds=cfg.proximity_thresholds,
+            tier_rewards=cfg.proximity_tier_rewards,
+            wrong_stop_penalty=cfg.proximity_wrong_stop_penalty,
         ),
     }
     return terms

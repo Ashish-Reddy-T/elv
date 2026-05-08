@@ -351,6 +351,13 @@ class SpatialVLM(nn.Module):
             siglip_tokens, dinov2_tokens, gatr_tokens, text_tokens=text_tokens
         )  # [B, 1369, 4096]
 
+        if text_tokens is not None:
+            t_norm = text_tokens.float().norm(dim=-1).mean()
+            f_norm = fused_tokens.float().norm(dim=-1).mean()
+            # If they are significantly different, force a match here
+            scale = t_norm / (f_norm + 1e-6)
+            fused_tokens = fused_tokens * scale
+
         # Stage 4: Build DeepStack inputs and run LLM backbone
         deepstack_kwargs = self.build_deepstack_inputs(
             fused_tokens, positions_3d, input_ids, spatial_start_idx
@@ -378,6 +385,10 @@ class SpatialVLM(nn.Module):
         input_ids: torch.Tensor,
         spatial_start_idx: int,
         attention_mask: torch.Tensor | None = None,
+        use_spatial_rope: bool = True,
+        use_deepstack: bool = True,
+        deepstack_blend_alpha: float = 1.0,
+        permute_spatial: bool = False,
         **generate_kwargs: Any,
     ) -> Any:
         """Autoregressive generation with spatial context.
@@ -409,6 +420,26 @@ class SpatialVLM(nn.Module):
                 text_tokens=text_tokens_for_norm,
             )  # [B, 1369, 4096]
 
+        # --- DYNAMIC CALIBRATION ---
+        # 1. Identify the exact 'real estate' the image will occupy
+        # all_embeds_tmp is the raw output of the embedding layer for the whole sequence
+        target_slots = all_embeds_tmp[:, spatial_start_idx : spatial_start_idx + n_fused]
+        
+        # 2. Measure the total energy the model expects in those slots
+        # This is usually lower than standard text energy
+        target_energy = target_slots.float().norm()
+        current_energy = fused_tokens.float().norm()
+        
+        # 3. Calculate the scale factor dynamically
+        # This will be ~0.33 based on your current logs, but will adapt if prompt changes
+        dyn_scale = target_energy / (current_energy + 1e-6)
+        
+        # 4. FORCE update the tensor in-place
+        fused_tokens.mul_(dyn_scale)
+
+        if permute_spatial:
+            perm = torch.randperm(fused_tokens.shape[1], device=fused_tokens.device)
+            fused_tokens = fused_tokens[:, perm, :]
 
         # Build spatial token mask [B, seq_len]
         bsz, seq_len = input_ids.shape
@@ -427,32 +458,58 @@ class SpatialVLM(nn.Module):
         except ImportError:
             _base = self.backbone.model
 
-        # Stash visual embeds (DeepStack hook fires once on prefill embed_tokens call,
-        # injects visual tokens, then self-clears so decode steps are unaffected) and
-        # 3D coords (RoPE patch reads these each layer during prefill).
-        # SFT checkpoint was trained without working DeepStack injection — the model
-        # learned with 1369 identical <|image_pad|> placeholder embeddings.  Injecting
-        # real visual features is OOD and produces degenerate output.  Skip the stash
-        # until SFT is re-run with the fixed injection code.
-        stash_spatial_forward_kwargs(_base, {
-            "spatial_token_mask": spatial_token_mask,
-        })
+        # Stash all three spatial kwargs so that prefill gets full visual injection:
+        #   - deepstack_visual_embeds: DeepStack hook fires once, injects fused vision
+        #     tokens at spatial positions, then self-clears (no-op for decode steps).
+        #   - spatial_coords_3d: IcosahedralRoPE3D reads per-token 3D positions each
+        #     layer during prefill; RoPE patch skips decode steps (seq_len=1 guard).
+        #   - spatial_token_mask: identifies which sequence positions are spatial.
+        # KV cache (use_cache=True below) ensures decode steps attend to KV entries
+        # built during prefill, so visual context is preserved without re-injection.
+        stash_kwargs: dict[str, Any] = {"spatial_token_mask": spatial_token_mask}
+        if use_spatial_rope:
+            stash_kwargs["spatial_coords_3d"] = positions_3d
+        if use_deepstack:
+            stash_kwargs["deepstack_visual_embeds"] = fused_tokens
+            stash_kwargs["deepstack_blend_alpha"] = deepstack_blend_alpha
+        stash_spatial_forward_kwargs(_base, stash_kwargs)
+        # Gradient checkpointing forces use_cache=False, which breaks DeepStack:
+        # each decode step re-processes the full growing sequence, and the hook's
+        # seq-len guard prevents injection for every step after prefill.
+        # Unconditionally disable GC around generate and re-enable after.
+        # PeftModel doesn't inherit PreTrainedModel, so is_gradient_checkpointing is
+        # always False on it — we must disable on the inner model directly.
+        try:
+            _inner = self.backbone.model.base_model.model
+        except AttributeError:
+            _inner = self.backbone.model
+        _inner.gradient_checkpointing_disable()
 
-        # use_cache=True is critical: KV cache built during prefill, decode steps only
-        # process new tokens.  Without it gradient_checkpointing sets use_cache=False,
-        # causing full re-forwards that re-fire the (already cleared) DeepStack hook.
         gen_kwargs: dict[str, Any] = {"input_ids": input_ids, "use_cache": True}
         if attention_mask is not None:
             gen_kwargs["attention_mask"] = attention_mask
         gen_kwargs.update(generate_kwargs)
 
-        out = self.backbone.model.generate(**gen_kwargs)
+        try:
+            out = self.backbone.model.generate(**gen_kwargs)
+        finally:
+            _inner.gradient_checkpointing_enable(
+                gradient_checkpointing_kwargs={"use_reentrant": False}
+            )
 
-        # Cleanup: remove stashed 3D coords from rotary modules
+        # Cleanup: clear all stashed spatial state from every submodule.
+        # _deepstack_visual_embeds/_deepstack_spatial_mask are no longer
+        # self-clearing (hook uses seq_len guard instead), so we must clear here.
         for _, module in self.backbone.model.named_modules():
             if hasattr(module, "_spatial_coords_3d"):
                 del module._spatial_coords_3d
             if hasattr(module, "_spatial_token_mask"):
                 del module._spatial_token_mask
+            if hasattr(module, "_deepstack_visual_embeds"):
+                del module._deepstack_visual_embeds
+            if hasattr(module, "_deepstack_spatial_mask"):
+                del module._deepstack_spatial_mask
+            if hasattr(module, "_deepstack_blend_alpha"):
+                del module._deepstack_blend_alpha
 
         return out
